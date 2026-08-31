@@ -16,6 +16,7 @@ import (
 
 	"github.com/fazalsarim-art/QuorumLimiter/internal/config"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/server"
+	"github.com/fazalsarim-art/QuorumLimiter/internal/storage"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -45,6 +46,18 @@ func run() int {
 	slog.SetDefault(logger)
 
 	logger.Info("starting quorumlimiter", slog.Any("config", cfg))
+
+	store, err := storage.Open(cfg.DataPath)
+	if err != nil {
+		logger.Error("failed to open storage", slog.String("error", err.Error()))
+		return 1
+	}
+	defer func() {
+		if cerr := store.Close(); cerr != nil {
+			logger.Error("failed to close storage", slog.String("error", cerr.Error()))
+		}
+	}()
+	logger.Info("storage opened", slog.String("data_path", store.Path()))
 
 	srv := server.New(cfg, logger)
 
