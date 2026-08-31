@@ -1,0 +1,28 @@
+# Keep build context small and free of secrets/data.
+.git/
+.gitignore
+.dockerignore
+
+# Secrets and local data
+.env
+.env.*
+!.env.example
+data/
+
+# Build / test output
+bin/
+coverage/
+*.out
+*.test
+*.exe
+
+# Docs and non-build assets not needed inside the image
+*.md
+docs/
+QuorumLimiter.pdf
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

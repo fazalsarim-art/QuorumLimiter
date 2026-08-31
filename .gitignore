@@ -1,3 +1,23 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Local data (per-node bbolt databases)
+data/
+
+# Test / coverage output
+coverage/
+*.out
+*.cover
+
+# Compiled binaries
+bin/
+/quorumlimiter
+/quorumlimiter.exe
+*.exe
+*.test
+
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -5,20 +25,6 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Environment / secrets
-.env
-.env.*
-*.local
-
 # Logs
 *.log
 logs/
-
-# Dependencies / builds (populated as the project takes shape)
-node_modules/
-dist/
-build/
-__pycache__/
-*.pyc
-.venv/
-venv/
