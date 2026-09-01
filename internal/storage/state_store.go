@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bytes"
+
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -190,6 +192,56 @@ func (t *StateTx) PutAudit(logIndex uint64, val []byte) error {
 // SetLastApplied records the applied checkpoint in this same transaction.
 func (t *StateTx) SetLastApplied(index uint64) error {
 	return t.tx.Bucket(bucketMeta).Put(metaLastApplied, u64(index))
+}
+
+// ForEachTokenBucketByPolicy calls fn for every token bucket belonging to
+// policyID, in key order. Do not mutate the bucket from within fn; collect
+// results and write them after this returns (iteration must not be disturbed).
+func (t *StateTx) ForEachTokenBucketByPolicy(policyID string, fn func(subject string, val []byte) error) error {
+	prefix, err := compositeKey([]byte(policyID))
+	if err != nil {
+		return err
+	}
+	c := t.tx.Bucket(bucketTokenBuckets).Cursor()
+	for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+		parts, err := splitCompositeKey(k)
+		if err != nil {
+			return err
+		}
+		if len(parts) != 2 || string(parts[0]) != policyID {
+			continue
+		}
+		if err := fn(string(parts[1]), cloneBytes(v)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForEachIdempotency calls fn for each idempotency record (raw key + value).
+// Collect keys to delete and delete them after iteration, not during.
+func (t *StateTx) ForEachIdempotency(fn func(key, val []byte) error) error {
+	return t.tx.Bucket(bucketIdempotency).ForEach(func(k, v []byte) error {
+		return fn(cloneBytes(k), cloneBytes(v))
+	})
+}
+
+// DeleteIdempotency removes an idempotency record by its raw composite key.
+func (t *StateTx) DeleteIdempotency(key []byte) error {
+	return t.tx.Bucket(bucketIdempotency).Delete(key)
+}
+
+// ForEachAudit calls fn for each audit record in ascending log-index order.
+// Collect indexes to delete and delete them after iteration, not during.
+func (t *StateTx) ForEachAudit(fn func(index uint64, val []byte) error) error {
+	return t.tx.Bucket(bucketAudit).ForEach(func(k, v []byte) error {
+		return fn(parseU64(k), cloneBytes(v))
+	})
+}
+
+// DeleteAudit removes an audit record by its log index.
+func (t *StateTx) DeleteAudit(index uint64) error {
+	return t.tx.Bucket(bucketAudit).Delete(u64(index))
 }
 
 // getTx returns a copy of a value within a transaction.

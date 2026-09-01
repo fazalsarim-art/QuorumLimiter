@@ -72,3 +72,67 @@ When a committed command is applied, its application writes **and** the new
 `last_applied` checkpoint commit in the same `StateTx`. A crash therefore leaves
 either all of an entry's effects or none, so a nonidempotent command is never
 replayed after restart.
+
+## State machine (`internal/limiter`)
+
+The state machine applies committed commands to application state. Its contract
+is **determinism**: the same command sequence, in the same order, produces
+byte-identical state on every node (verified by comparing `Store.DebugDump`
+output across two independently built stores).
+
+### Rules that guarantee determinism
+
+- **Integer-only token math.** Balances are milli-tokens (1000 = one token).
+  Refill uses integer division and preserves the remainder; reaching capacity
+  resets the remainder so stale fractional credit cannot exceed capacity.
+  Multiplications are overflow-checked; an overflow (only reachable after an
+  absurdly long idle period) deterministically fills to capacity.
+- **No local clock in apply.** Every command carries a leader-observed
+  `timestamp_ms`. Effective time is `max(command_time, last_refill)`, so time
+  never moves backward after a leader change.
+- **No randomness, goroutines, network, or environment access** on the apply
+  path. Raw API keys are generated on the leader *before* proposing; only the
+  key prefix and HMAC digest are replicated.
+
+### Commands
+
+Versioned envelope (`{schema_version, id, type, timestamp_ms, payload}`) with
+types: `create_policy`, `update_policy`, `set_policy_active`, `create_client`,
+`revoke_client`, `decide`, and `prune`.
+
+### Apply outcomes
+
+`StateMachine.Apply` runs one command inside a single `StateTx` that also
+advances `last_applied`. **Infrastructure errors** (storage/corruption) are
+returned as Go errors and roll the transaction back for retry. **Business
+rejections** (validation, version conflict, duplicate, unknown/inactive policy,
+revoked client, rate-limited denial, idempotency conflict) are reported in the
+`Result` — they still commit and advance `last_applied`, so a consumed entry is
+never retried forever.
+
+### Decision flow
+
+1. Validate the request shape (policy id, subject, request id, cost).
+2. **Idempotency lookup before any state change.** A matching record replays the
+   original result (`duplicate: true`) with no deduction; a reused key with
+   different content is an `idempotency_conflict`.
+3. Authorize the client (exists, active, allowed to use the policy) and load the
+   policy (exists, active, cost within `max_cost`).
+4. Load or initialize the bucket (a new subject starts full), refill to the
+   command time, then spend or deny.
+5. Store the `DecisionRecord` (idempotency) and an `AuditEvent` (keyed by log
+   index, subject stored only as a short hash).
+
+### Policy update conversion
+
+Editing a policy deterministically visits every existing bucket for that policy,
+refills it **under the old policy** through the update timestamp, clamps it to
+the new capacity, resets the remainder if the interval changed, stamps the new
+policy version, and stores the new policy — all in one transaction. This keeps a
+new refill rate from being applied retroactively to already-elapsed time.
+
+### Pruning
+
+A `prune` command removes idempotency records whose `expires_at_ms` is at or
+before the command timestamp and trims audits to the newest N by log index —
+deterministically, using the command timestamp, never a local clock.
