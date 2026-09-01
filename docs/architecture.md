@@ -136,3 +136,61 @@ new refill rate from being applied retroactively to already-elapsed time.
 A `prune` command removes idempotency records whose `expires_at_ms` is at or
 before the command timestamp and trims audits to the newest N by log index —
 deterministically, using the command timestamp, never a local clock.
+
+## Consensus (`internal/raft`)
+
+The Raft-lite node is built up over Phases 4–6. Phase 4 establishes the
+foundation: message types, the concurrency model, persistent term/vote
+transitions, recovery, and status. Elections (Phase 5) and log replication /
+commit / apply (Phase 6) build on it.
+
+### Concurrency model
+
+A node runs a **single event-loop goroutine** that exclusively owns all mutable
+consensus state (role, term, vote, leader, commit/applied indexes, and — when
+leader — per-follower next/match indexes). Nothing else reads or writes those
+fields. Callers interact only through channels:
+
+- incoming `RequestVote` / `AppendEntries` RPCs are handed to the loop with a
+  buffered reply channel;
+- `Status()` sends a reply channel and receives an immutable snapshot;
+- `Stop()` cancels the loop's context and waits for it to exit.
+
+This channel discipline (rather than a shared mutex) is what keeps consensus
+state race-free, and it means disk writes happen on the loop goroutine in short
+transactions, never while a network call is in flight.
+
+### Narrow interfaces
+
+The node depends on small injected interfaces, so it is testable without real
+networking or wall-clock time:
+
+- `Store` — persistence (satisfied by `*storage.Store`).
+- `Transport` — peer RPC sending (used from Phase 5).
+- `ApplyFunc` — applying a committed entry (wired in Phase 6).
+- `Clock` — `Now` / `After`, so tests drive election timing deterministically.
+
+### Persistent transitions
+
+- `becomeFollower(term, leaderID)` — on a **higher term** it persists the new
+  term and a **cleared vote before responding**, which prevents voting twice in
+  one term across a crash. The in-memory term is advanced only after the disk
+  write succeeds, so memory never runs ahead of disk.
+- `becomeCandidate` — increments the term and votes for self, persisting both
+  before any RequestVote is sent (the sending side is Phase 5).
+- `becomeLeader` — initializes each follower's `nextIndex = lastLogIndex + 1`
+  and `matchIndex = 0` (the no-op append and heartbeats are Phase 5).
+
+### Recovery and identity
+
+On construction the node reloads term, vote, log bounds, and the commit/applied
+checkpoints from the store, and pins the cluster ID: it adopts the configured ID
+on first start, and **refuses to start** if the stored ID differs from the
+configured one (guarding against cross-cluster mix-ups).
+
+### RPC handling in this phase
+
+`RequestVote` and `AppendEntries` handlers enforce the term rules and
+higher-term step-down and return the current term. Vote granting (log-freshness,
+one vote per term) is Phase 5; log matching, conflict repair, and commit
+advancement are Phase 6.
