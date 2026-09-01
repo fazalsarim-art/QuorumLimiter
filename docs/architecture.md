@@ -229,5 +229,53 @@ higher-term step-down and return the current term.
   decoding (unknown fields rejected). These routes must never be exposed through
   the public gateway.
 
-Log matching, conflict repair, and commit advancement are Phase 6; the node is
-wired into the running server when the public decision API needs it (Phase 7).
+The node is wired into the running server when the public decision API needs it
+(Phase 7).
+
+### Log replication, quorum commit, and ordered apply (Phase 6)
+
+**Proposals.** `Propose` is accepted only on the leader. The command is appended
+to the leader's durable log first, a waiter is registered for that index, and
+replication is triggered. The call returns the state machine's result only after
+the entry is **committed and applied**. A caller timeout returns
+`ErrProposalTimeout` but does **not** cancel the entry — it may still commit and
+apply later, and the client recovers the result by retrying with the same
+idempotency key. On step-down, pending waiters fail with `ErrNotLeader` (their
+uncommitted entries may be overwritten).
+
+**Replication.** The leader sends `AppendEntries` from each follower's
+`nextIndex` on every heartbeat and whenever a proposal arrives. A follower checks
+that it holds `prevLogIndex`/`prevLogTerm`; on mismatch it returns **conflict
+hints** (`conflictTerm` + the first index of that term, or `conflictIndex =
+lastIndex+1` when its log is too short) so the leader backs up efficiently. On a
+match, the follower **transactionally** truncates any conflicting suffix and
+appends the new entries (`OverwriteEntries`), then advances its commit index to
+`min(leaderCommit, lastMatched)`.
+
+**Commit.** The leader advances `commitIndex` to the highest index replicated on
+a **majority**, subject to the **current-term rule**: an entry is committed by
+count only if it belongs to the leader's current term. An older-term entry
+becomes committed indirectly once a current-term entry above it does. The
+new-term no-op appended on election is what lets a fresh leader carry prior-term
+entries forward.
+
+**Apply.** Committed entries are applied strictly in order, from
+`lastApplied+1` through `commitIndex`. Each entry is applied via the injected
+`ApplyFunc`, whose contract is to advance `last_applied` **atomically** with the
+entry's effects — for a command, `limiter.ApplyEntry` does the application writes
+and the checkpoint in one bbolt transaction; for a no-op/sentinel it just
+advances the checkpoint. The applied result is delivered to any registered
+waiter.
+
+**Restart replay.** On construction the node replays committed-but-unapplied
+entries (`lastApplied+1..commitIndex`) before serving requests, so a node that
+crashed between commit and apply recovers its full state.
+
+### Testing (`internal/testcluster`)
+
+An in-process cluster wires real storage and state machines behind a
+`FaultTransport` whose directed links can be cut to simulate (possibly
+asymmetric) partitions. Integration tests cover normal replication, a follower
+down, an isolated leader that cannot commit, follower catch-up after a
+partition heals, old-leader conflict-suffix repair, restart recovery, hot-bucket
+concurrency (never over-allowing), and application-state convergence.

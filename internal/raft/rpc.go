@@ -80,8 +80,9 @@ func (n *Node) handleRequestVote(req RequestVoteRequest) RequestVoteResponse {
 }
 
 // handleAppendEntries runs on the event loop. It enforces the term rules,
-// recognizes the leader, and steps down (which resets the election timer). Log
-// matching, conflict repair, and commit advancement are added in Phase 6.
+// recognizes the leader, checks log consistency at prevLogIndex (returning
+// conflict hints on mismatch), transactionally repairs any conflicting suffix
+// and appends new entries, and advances the commit index.
 func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 	resp := AppendEntriesResponse{
 		ProtocolVersion: ProtocolVersion,
@@ -93,7 +94,7 @@ func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesRespon
 		return resp
 	}
 	if req.Term < n.currentTerm {
-		return resp
+		return resp // stale leader
 	}
 	// A valid leader at an equal or higher term makes this node a follower,
 	// establishes the current leader, and resets the election timer.
@@ -102,5 +103,61 @@ func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesRespon
 		return resp
 	}
 	resp.Term = n.currentTerm
+
+	// Log consistency: the follower must contain prevLogIndex with prevLogTerm.
+	if req.PrevLogIndex > n.lastLogIndex {
+		// Follower's log is too short. Hint the leader to back up to our end.
+		resp.ConflictTerm = 0
+		resp.ConflictIndex = n.lastLogIndex + 1
+		return resp
+	}
+	if req.PrevLogIndex > 0 { // index 0 is the sentinel and always matches
+		entry, ok, err := n.store.Entry(req.PrevLogIndex)
+		if err != nil {
+			n.log.Error("read prev entry failed", "error", err)
+			return resp
+		}
+		if !ok || entry.Term != req.PrevLogTerm {
+			resp.ConflictTerm = entry.Term // 0 if the entry was missing
+			resp.ConflictIndex = n.firstIndexOfTerm(req.PrevLogIndex, entry.Term)
+			return resp
+		}
+	}
+
+	// prevLog matches. Repair any conflicting suffix and append new entries in
+	// one transaction.
+	truncateFrom, toAppend, err := n.reconcileEntries(req.PrevLogIndex, req.Entries)
+	if err != nil {
+		n.log.Error("reconcile entries failed", "error", err)
+		return resp
+	}
+	if truncateFrom > 0 || len(toAppend) > 0 {
+		if err := n.store.OverwriteEntries(truncateFrom, toAppend); err != nil {
+			n.log.Error("overwrite entries failed", "error", err)
+			return resp
+		}
+		if err := n.refreshLastLog(); err != nil {
+			n.log.Error("refresh last log failed", "error", err)
+			return resp
+		}
+	}
+
+	resp.Success = true
+	resp.MatchIndex = req.PrevLogIndex + uint64(len(req.Entries))
+
+	// Advance commit to what the leader reports, bounded by what we now hold.
+	if req.LeaderCommit > n.commitIndex {
+		newCommit := req.LeaderCommit
+		if resp.MatchIndex < newCommit {
+			newCommit = resp.MatchIndex
+		}
+		if newCommit > n.commitIndex {
+			n.commitIndex = newCommit
+			if err := n.store.SetCommitIndex(newCommit); err != nil {
+				n.log.Error("persist commit index failed", "error", err)
+			}
+			n.applyCommitted()
+		}
+	}
 	return resp
 }

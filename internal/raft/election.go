@@ -132,7 +132,8 @@ func (n *Node) handleVoteResponse(vr voteResult) {
 }
 
 // promoteToLeader completes the transition to leader: it appends a no-op entry in
-// the current term to assert leadership and sends an immediate heartbeat.
+// the current term to assert leadership (and let the current-term commit rule
+// carry forward entries from prior terms) and replicates immediately.
 func (n *Node) promoteToLeader() {
 	n.becomeLeader()
 	noop := LogEntry{Index: n.lastLogIndex + 1, Term: n.currentTerm, Kind: KindNoop}
@@ -141,41 +142,21 @@ func (n *Node) promoteToLeader() {
 	} else {
 		n.lastLogIndex = noop.Index
 		n.lastLogTerm = noop.Term
+		n.nextIndex[n.id] = noop.Index + 1 // harmless; self is not in peers
 	}
 	n.log.Info("became leader", "term", n.currentTerm, "last_index", n.lastLogIndex)
-	n.sendHeartbeats()
+	n.replicateToAll()
 }
 
-// --- heartbeats ---
-
+// onHeartbeat replicates to every peer on each tick, which both maintains
+// leadership and retries lagging followers.
 func (n *Node) onHeartbeat() {
 	if n.role != RoleLeader {
 		n.stopHeartbeat()
 		return
 	}
-	n.sendHeartbeats()
+	n.replicateToAll()
 	n.startHeartbeat()
-}
-
-// sendHeartbeats sends an empty AppendEntries to every peer to maintain
-// leadership. Actual log replication (entries, per-peer prev indexes, commit
-// advancement) is added in Phase 6.
-func (n *Node) sendHeartbeats() {
-	term := n.currentTerm
-	req := AppendEntriesRequest{
-		ProtocolVersion: ProtocolVersion,
-		ClusterID:       n.clusterID,
-		SourceNodeID:    n.id,
-		Term:            term,
-		LeaderID:        n.id,
-		PrevLogIndex:    n.lastLogIndex,
-		PrevLogTerm:     n.lastLogTerm,
-		Entries:         nil,
-		LeaderCommit:    n.commitIndex,
-	}
-	for _, peer := range n.peers {
-		go n.sendAppendEntries(peer, term, req)
-	}
 }
 
 func (n *Node) sendAppendEntries(peer string, term uint64, req AppendEntriesRequest) {
@@ -188,18 +169,5 @@ func (n *Node) sendAppendEntries(peer string, term uint64, req AppendEntriesRequ
 	select {
 	case n.appendRespCh <- appendResult{peer: peer, term: term, resp: resp, err: err}:
 	case <-n.ctx.Done():
-	}
-}
-
-// handleAppendResponse steps down on a higher term. Using success/matchIndex to
-// advance replication is added in Phase 6.
-func (n *Node) handleAppendResponse(ar appendResult) {
-	if ar.err != nil {
-		return
-	}
-	if ar.resp.Term > n.currentTerm {
-		if err := n.becomeFollower(ar.resp.Term, ""); err != nil {
-			n.log.Error("step down on append response failed", "error", err)
-		}
 	}
 }

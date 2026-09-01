@@ -195,17 +195,46 @@ func (s *Store) TruncateSuffix(from uint64) error {
 		from = 1
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRaftLog)
-		c := b.Cursor()
-		var keys [][]byte
-		for k, _ := c.Seek(u64(from)); k != nil; k, _ = c.Next() {
-			keys = append(keys, cloneBytes(k))
+		return truncateSuffixTx(tx, from)
+	})
+}
+
+// OverwriteEntries atomically repairs a follower's log: if truncateFrom >= 1 it
+// deletes the conflicting suffix (index >= truncateFrom, never the sentinel),
+// then appends entries — all in one transaction, so a crash leaves the log
+// either unchanged or fully repaired.
+func (s *Store) OverwriteEntries(truncateFrom uint64, entries []LogEntry) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if truncateFrom >= 1 {
+			if err := truncateSuffixTx(tx, truncateFrom); err != nil {
+				return err
+			}
 		}
-		for _, k := range keys {
-			if err := b.Delete(k); err != nil {
-				return fmt.Errorf("storage: truncate entry: %w", err)
+		b := tx.Bucket(bucketRaftLog)
+		for _, e := range entries {
+			enc, err := encodeLogEntry(e)
+			if err != nil {
+				return err
+			}
+			if err := b.Put(u64(e.Index), enc); err != nil {
+				return fmt.Errorf("storage: overwrite entry %d: %w", e.Index, err)
 			}
 		}
 		return nil
 	})
+}
+
+func truncateSuffixTx(tx *bolt.Tx, from uint64) error {
+	b := tx.Bucket(bucketRaftLog)
+	c := b.Cursor()
+	var keys [][]byte
+	for k, _ := c.Seek(u64(from)); k != nil; k, _ = c.Next() {
+		keys = append(keys, cloneBytes(k))
+	}
+	for _, k := range keys {
+		if err := b.Delete(k); err != nil {
+			return fmt.Errorf("storage: truncate entry: %w", err)
+		}
+	}
+	return nil
 }

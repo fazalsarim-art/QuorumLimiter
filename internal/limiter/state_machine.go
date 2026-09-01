@@ -77,6 +77,26 @@ type StateMachine struct{}
 // New returns a StateMachine.
 func New() *StateMachine { return &StateMachine{} }
 
+// ApplyEntry applies one committed Raft log entry. It is the bridge between the
+// consensus layer and the state machine: a command entry is decoded and applied
+// (advancing last_applied atomically with its effects), while a no-op or
+// sentinel entry has no application effect and only advances the applied
+// checkpoint. In all cases last_applied advances so the apply loop makes
+// progress.
+func (sm *StateMachine) ApplyEntry(store *storage.Store, index, term uint64, entry storage.LogEntry) (Result, error) {
+	if entry.Kind != storage.KindCommand {
+		if err := store.SetLastApplied(index); err != nil {
+			return Result{}, err
+		}
+		return Result{Outcome: OutcomeApplied}, nil
+	}
+	cmd, err := DecodeCommand(entry.Command)
+	if err != nil {
+		return Result{}, err
+	}
+	return sm.Apply(store, ApplyContext{LogIndex: index, Term: term}, cmd)
+}
+
 // Apply applies one committed command inside a single storage transaction that
 // also advances last_applied, so a crash leaves either all or none of the
 // entry's effects. Only infrastructure errors are returned; business rejections

@@ -113,7 +113,9 @@ func TestRecoveryFromStore(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetCommitIndex(2); err != nil {
+	// commit == applied so recovery does no replay (replay with a real state
+	// machine is covered by the integration recovery test).
+	if err := st.SetCommitIndex(1); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetLastApplied(1); err != nil {
@@ -127,8 +129,34 @@ func TestRecoveryFromStore(t *testing.T) {
 	if n.lastLogIndex != 3 || n.lastLogTerm != 7 {
 		t.Errorf("recovered lastLog=%d/%d, want 3/7", n.lastLogIndex, n.lastLogTerm)
 	}
-	if n.commitIndex != 2 || n.lastApplied != 1 {
-		t.Errorf("recovered commit=%d applied=%d, want 2/1", n.commitIndex, n.lastApplied)
+	if n.commitIndex != 1 || n.lastApplied != 1 {
+		t.Errorf("recovered commit=%d applied=%d, want 1/1", n.commitIndex, n.lastApplied)
+	}
+}
+
+func TestRecoveryReplaysCommittedUnapplied(t *testing.T) {
+	st := openStore(t)
+	if err := st.AppendEntries([]LogEntry{
+		{Index: 1, Term: 1, Kind: KindNoop},
+		{Index: 2, Term: 1, Kind: KindNoop},
+		{Index: 3, Term: 1, Kind: KindNoop},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Committed through 3 but only applied through 1: recovery must replay 2 and 3.
+	if err := st.SetCommitIndex(3); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetLastApplied(1); err != nil {
+		t.Fatal(err)
+	}
+
+	n := noLoopNode(t, st) // no ApplyFunc: applyEntry advances the checkpoint
+	if n.lastApplied != 3 {
+		t.Errorf("lastApplied after replay = %d, want 3", n.lastApplied)
+	}
+	if applied, _ := st.LastApplied(); applied != 3 {
+		t.Errorf("persisted lastApplied = %d, want 3", applied)
 	}
 }
 

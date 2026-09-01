@@ -39,6 +39,7 @@ type Store interface {
 	Entries(lo, hi uint64) ([]LogEntry, error)
 	AppendEntries(entries []LogEntry) error
 	TruncateSuffix(from uint64) error
+	OverwriteEntries(truncateFrom uint64, entries []LogEntry) error
 	CommitIndex() (uint64, error)
 	SetCommitIndex(index uint64) error
 	LastApplied() (uint64, error)
@@ -54,8 +55,12 @@ type Transport interface {
 	SendAppendEntries(ctx context.Context, target string, req AppendEntriesRequest) (AppendEntriesResponse, error)
 }
 
-// ApplyFunc applies a committed entry to the state machine (wired in Phase 6).
-type ApplyFunc func(entry LogEntry) error
+// ApplyFunc applies a committed entry to the state machine and returns its
+// result for any waiting proposer. Its contract is that it advances the store's
+// last_applied checkpoint atomically with the entry's effects, so a crash leaves
+// either both or neither. The returned value is opaque to raft (it is delivered
+// to the proposer, which knows its concrete type).
+type ApplyFunc func(index, term uint64, entry LogEntry) (any, error)
 
 // Clock abstracts time so tests can drive election timing deterministically.
 type Clock interface {
@@ -127,6 +132,8 @@ type Node struct {
 	statusCh     chan chan Status
 	voteRespCh   chan voteResult
 	appendRespCh chan appendResult
+	proposeCh    chan proposeEnvelope
+	deregisterCh chan uint64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -144,6 +151,7 @@ type Node struct {
 	nextIndex    map[string]uint64
 	matchIndex   map[string]uint64
 	votesGranted int
+	waiters      map[uint64]*waiter
 
 	// timer channels; nil disables the corresponding timer for the current role.
 	electionCh  <-chan time.Time
@@ -229,6 +237,9 @@ func newNode(cfg Config, deps Deps) (*Node, error) {
 		statusCh:          make(chan chan Status),
 		voteRespCh:        make(chan voteResult),
 		appendRespCh:      make(chan appendResult),
+		proposeCh:         make(chan proposeEnvelope),
+		deregisterCh:      make(chan uint64),
+		waiters:           make(map[uint64]*waiter),
 		done:              make(chan struct{}),
 		role:              RoleFollower,
 	}
@@ -283,7 +294,10 @@ func (n *Node) recover() error {
 	n.lastApplied = applied
 	n.role = RoleFollower
 	n.leaderID = ""
-	return nil
+
+	// Replay any committed-but-unapplied entries before serving requests, so a
+	// node that crashed between commit and apply recovers its full state.
+	return n.replayCommitted()
 }
 
 func (n *Node) recoverClusterID() error {
@@ -333,6 +347,10 @@ func (n *Node) run() {
 			n.handleVoteResponse(vr)
 		case ar := <-n.appendRespCh:
 			n.handleAppendResponse(ar)
+		case env := <-n.proposeCh:
+			n.handlePropose(env)
+		case idx := <-n.deregisterCh:
+			delete(n.waiters, idx)
 		}
 	}
 }
@@ -395,10 +413,16 @@ func (n *Node) becomeFollower(term uint64, leaderID string) error {
 		n.currentTerm = term
 		n.votedFor = ""
 	}
+	wasLeader := n.role == RoleLeader
 	n.role = RoleFollower
 	n.leaderID = leaderID
 	n.stopHeartbeat()
 	n.resetElectionTimer()
+	if wasLeader {
+		// Uncommitted proposals may be overwritten by the new leader; fail their
+		// waiters so callers retry (safely, with the same idempotency key).
+		n.failWaiters(ErrNotLeader)
+	}
 	return nil
 }
 
