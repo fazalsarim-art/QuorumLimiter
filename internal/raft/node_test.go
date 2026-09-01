@@ -195,22 +195,25 @@ func TestClusterIDMismatchRefused(t *testing.T) {
 	}
 }
 
-func TestHandleRequestVoteHigherTermStepsDownAndClearsVote(t *testing.T) {
+func TestHandleRequestVoteHigherTermStepsDownAndGrants(t *testing.T) {
 	st := openStore(t)
 	n := runningNode(t, st)
 
+	// A higher-term RequestVote from a candidate with an up-to-date log: the node
+	// steps down (persisting the new term and clearing its old vote) and then
+	// grants its vote for the new term.
 	resp, err := n.HandleRequestVote(context.Background(), vote(5, "node2"))
 	if err != nil {
 		t.Fatalf("HandleRequestVote: %v", err)
 	}
-	if resp.Term != 5 {
-		t.Errorf("resp.Term = %d, want 5", resp.Term)
+	if resp.Term != 5 || !resp.VoteGranted {
+		t.Errorf("resp term=%d granted=%v, want 5/true", resp.Term, resp.VoteGranted)
 	}
 	if term, _ := st.CurrentTerm(); term != 5 {
 		t.Errorf("persisted term = %d, want 5", term)
 	}
-	if v, _ := st.VotedFor(); v != "" {
-		t.Errorf("persisted vote = %q, want cleared", v)
+	if v, _ := st.VotedFor(); v != "node2" {
+		t.Errorf("persisted vote = %q, want node2", v)
 	}
 	s, _ := n.Status()
 	if s.Term != 5 || s.Role != RoleFollower {
@@ -218,23 +221,48 @@ func TestHandleRequestVoteHigherTermStepsDownAndClearsVote(t *testing.T) {
 	}
 }
 
-func TestHandleAppendEntriesHigherTermRecognizesLeader(t *testing.T) {
+func TestOnlyOneVotePerTerm(t *testing.T) {
 	st := openStore(t)
 	n := runningNode(t, st)
 
+	first, _ := n.HandleRequestVote(context.Background(), vote(5, "node2"))
+	if !first.VoteGranted {
+		t.Fatal("first vote should be granted")
+	}
+	// A different candidate in the same term must be denied.
+	second, _ := n.HandleRequestVote(context.Background(), vote(5, "node3"))
+	if second.VoteGranted {
+		t.Error("second candidate in same term should be denied")
+	}
+}
+
+func TestHandleAppendEntriesHigherTermRecognizesLeaderAndClearsVote(t *testing.T) {
+	st := openStore(t)
+	n := runningNode(t, st)
+
+	// First cast a vote in term 5 so we can observe it being cleared.
+	if _, err := n.HandleRequestVote(context.Background(), vote(5, "node2")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A higher-term AppendEntries recognizes the leader and clears the vote
+	// (AppendEntries never grants a vote).
 	req := AppendEntriesRequest{
-		ProtocolVersion: ProtocolVersion, ClusterID: "test-cluster", SourceNodeID: "node2",
-		Term: 4, LeaderID: "node2",
+		ProtocolVersion: ProtocolVersion, ClusterID: "test-cluster", SourceNodeID: "node3",
+		Term: 6, LeaderID: "node3",
 	}
 	resp, err := n.HandleAppendEntries(context.Background(), req)
 	if err != nil {
 		t.Fatalf("HandleAppendEntries: %v", err)
 	}
-	if resp.Term != 4 {
-		t.Errorf("resp.Term = %d, want 4", resp.Term)
+	if resp.Term != 6 {
+		t.Errorf("resp.Term = %d, want 6", resp.Term)
+	}
+	if v, _ := st.VotedFor(); v != "" {
+		t.Errorf("vote = %q, want cleared after higher-term AppendEntries", v)
 	}
 	s, _ := n.Status()
-	if s.Term != 4 || s.LeaderID != "node2" || s.Role != RoleFollower {
+	if s.Term != 6 || s.LeaderID != "node3" || s.Role != RoleFollower {
 		t.Errorf("status term=%d leader=%q role=%s", s.Term, s.LeaderID, s.Role)
 	}
 }

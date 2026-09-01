@@ -188,9 +188,46 @@ checkpoints from the store, and pins the cluster ID: it adopts the configured ID
 on first start, and **refuses to start** if the stored ID differs from the
 configured one (guarding against cross-cluster mix-ups).
 
-### RPC handling in this phase
+### RPC handling (Phase 4 baseline)
 
 `RequestVote` and `AppendEntries` handlers enforce the term rules and
-higher-term step-down and return the current term. Vote granting (log-freshness,
-one vote per term) is Phase 5; log matching, conflict repair, and commit
-advancement are Phase 6.
+higher-term step-down and return the current term.
+
+### Leader election (Phase 5)
+
+- **Randomized election timeouts** (default 800–1400 ms) are drawn from a
+  per-node RNG seeded independently, so nodes rarely time out together and split
+  the vote. The timeout fires through the injectable `Clock`.
+- A follower or candidate that times out **increments its term, votes for
+  itself (persisting both first), and sends `RequestVote` to all peers
+  concurrently**. Each send runs in its own goroutine and reports back to the
+  event loop through a channel; the goroutines read only immutable snapshots, so
+  the loop keeps sole ownership of mutable state.
+- A node **grants at most one vote per term**, and only when the candidate's log
+  is at least as up-to-date (last term first, then last index). Granting a vote
+  resets the election timer.
+- On reaching a **majority (2 of 3)**, the candidate becomes leader,
+  initializes each follower's `nextIndex`/`matchIndex`, appends a **current-term
+  no-op** to assert leadership, and starts sending **heartbeats** (empty
+  `AppendEntries`) every heartbeat interval.
+- The election timer is **reset only** on a valid `AppendEntries` from the
+  current leader or when granting a vote — never on a RequestVote that is not
+  granted — which avoids election starvation.
+- A node **steps down immediately** on any request or response carrying a higher
+  term, persisting the new term and clearing its vote before responding.
+
+### Internal RPC transport and endpoint (Phase 5)
+
+`internal/api` provides both sides of the wire:
+
+- `HTTPTransport` (client) implements `raft.Transport`, POSTing JSON RPCs to a
+  peer's base URL with the cluster bearer token.
+- `InternalRaftHandler` (server) serves `POST /internal/raft/request-vote`,
+  `POST /internal/raft/append-entries`, and `GET /internal/raft/status`, guarded
+  by: constant-time **cluster bearer-token** check, a **source-node allowlist**,
+  JSON **content-type** enforcement, a **64 KiB body limit**, and strict
+  decoding (unknown fields rejected). These routes must never be exposed through
+  the public gateway.
+
+Log matching, conflict repair, and commit advancement are Phase 6; the node is
+wired into the running server when the public decision API needs it (Phase 7).

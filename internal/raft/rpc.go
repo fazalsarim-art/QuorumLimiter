@@ -43,9 +43,9 @@ func (n *Node) HandleAppendEntries(ctx context.Context, req AppendEntriesRequest
 	}
 }
 
-// handleRequestVote runs on the event loop. In this phase it enforces the term
-// rules and higher-term step-down; granting a vote (log-freshness comparison,
-// one vote per term, resetting the election timer) is added in Phase 5.
+// handleRequestVote runs on the event loop. It enforces the term rules, steps
+// down on a higher term, and grants at most one vote per term to a candidate
+// whose log is at least as up-to-date. Granting a vote resets the election timer.
 func (n *Node) handleRequestVote(req RequestVoteRequest) RequestVoteResponse {
 	resp := RequestVoteResponse{
 		ProtocolVersion: ProtocolVersion,
@@ -66,12 +66,22 @@ func (n *Node) handleRequestVote(req RequestVoteRequest) RequestVoteResponse {
 		}
 	}
 	resp.Term = n.currentTerm
+
+	alreadyVoted := n.votedFor != "" && n.votedFor != req.CandidateID
+	if !alreadyVoted && n.candidateLogUpToDate(req.LastLogTerm, req.LastLogIndex) {
+		if err := n.persistVote(req.CandidateID); err != nil {
+			n.log.Error("persist vote failed", "error", err)
+			return resp
+		}
+		resp.VoteGranted = true
+		n.resetElectionTimer() // granting a vote defers our own election
+	}
 	return resp
 }
 
-// handleAppendEntries runs on the event loop. In this phase it enforces the term
-// rules, recognizes the leader, and steps down; log matching, conflict repair,
-// and commit advancement are added in Phase 6.
+// handleAppendEntries runs on the event loop. It enforces the term rules,
+// recognizes the leader, and steps down (which resets the election timer). Log
+// matching, conflict repair, and commit advancement are added in Phase 6.
 func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 	resp := AppendEntriesResponse{
 		ProtocolVersion: ProtocolVersion,
@@ -85,8 +95,8 @@ func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesRespon
 	if req.Term < n.currentTerm {
 		return resp
 	}
-	// A valid leader at an equal or higher term makes this node a follower and
-	// establishes the current leader.
+	// A valid leader at an equal or higher term makes this node a follower,
+	// establishes the current leader, and resets the election timer.
 	if err := n.becomeFollower(req.Term, req.LeaderID); err != nil {
 		n.log.Error("step down on AppendEntries failed", "error", err)
 		return resp

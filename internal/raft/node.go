@@ -5,7 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"time"
+)
+
+// Default election and heartbeat timing, used when a Config leaves them zero.
+const (
+	defaultElectionMin = 800 * time.Millisecond
+	defaultElectionMax = 1400 * time.Millisecond
+	defaultHeartbeat   = 200 * time.Millisecond
 )
 
 // Typed errors returned across the node boundary.
@@ -106,10 +114,19 @@ type Node struct {
 	clock     Clock
 	log       *slog.Logger
 
+	// timing
+	electionMin       time.Duration
+	electionMax       time.Duration
+	heartbeatInterval time.Duration
+	rpcTimeout        time.Duration
+	rng               *rand.Rand
+
 	// channels into the event loop
-	voteCh   chan voteEnvelope
-	appendCh chan appendEnvelope
-	statusCh chan chan Status
+	voteCh       chan voteEnvelope
+	appendCh     chan appendEnvelope
+	statusCh     chan chan Status
+	voteRespCh   chan voteResult
+	appendRespCh chan appendResult
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -126,6 +143,11 @@ type Node struct {
 	lastLogTerm  uint64
 	nextIndex    map[string]uint64
 	matchIndex   map[string]uint64
+	votesGranted int
+
+	// timer channels; nil disables the corresponding timer for the current role.
+	electionCh  <-chan time.Time
+	heartbeatCh <-chan time.Time
 }
 
 // New constructs a node, recovers persisted state, and starts its event loop.
@@ -134,9 +156,13 @@ func New(cfg Config, deps Deps) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	go n.run()
+	n.start()
 	return n, nil
 }
+
+// start launches the event loop. It is separate from newNode so tests can build
+// several nodes, register them with a shared transport, and then start them all.
+func (n *Node) start() { go n.run() }
 
 // newNode builds and recovers a node without starting the event loop. It is used
 // directly by tests that exercise transition helpers single-threaded.
@@ -163,21 +189,48 @@ func newNode(cfg Config, deps Deps) (*Node, error) {
 		}
 	}
 
+	electionMin := cfg.ElectionTimeoutMin
+	if electionMin <= 0 {
+		electionMin = defaultElectionMin
+	}
+	electionMax := cfg.ElectionTimeoutMax
+	if electionMax <= electionMin {
+		electionMax = electionMin + defaultElectionMax - defaultElectionMin
+	}
+	heartbeat := cfg.HeartbeatInterval
+	if heartbeat <= 0 {
+		heartbeat = defaultHeartbeat
+	}
+
+	// Seed each node's election-timeout RNG independently so nodes do not all
+	// time out together and split the vote.
+	seed := time.Now().UnixNano()
+	for _, c := range cfg.NodeID {
+		seed = seed*31 + int64(c)
+	}
+
 	n := &Node{
-		id:        cfg.NodeID,
-		clusterID: cfg.ClusterID,
-		peers:     others,
-		quorum:    len(cfg.Peers)/2 + 1,
-		store:     deps.Store,
-		transport: deps.Transport,
-		apply:     deps.Apply,
-		clock:     clock,
-		log:       logger.With(slog.String("component", "raft")),
-		voteCh:    make(chan voteEnvelope),
-		appendCh:  make(chan appendEnvelope),
-		statusCh:  make(chan chan Status),
-		done:      make(chan struct{}),
-		role:      RoleFollower,
+		id:                cfg.NodeID,
+		clusterID:         cfg.ClusterID,
+		peers:             others,
+		quorum:            len(cfg.Peers)/2 + 1,
+		store:             deps.Store,
+		transport:         deps.Transport,
+		apply:             deps.Apply,
+		clock:             clock,
+		log:               logger.With(slog.String("component", "raft")),
+		electionMin:       electionMin,
+		electionMax:       electionMax,
+		heartbeatInterval: heartbeat,
+		rpcTimeout:        electionMin,
+		rng:               rand.New(rand.NewSource(seed)),
+		voteCh:            make(chan voteEnvelope),
+		appendCh:          make(chan appendEnvelope),
+		statusCh:          make(chan chan Status),
+		voteRespCh:        make(chan voteResult),
+		appendRespCh:      make(chan appendResult),
+		done:              make(chan struct{}),
+		role:              RoleFollower,
 	}
 	n.ctx, n.cancel = context.WithCancel(context.Background())
 
@@ -255,9 +308,13 @@ func (n *Node) recoverClusterID() error {
 	return nil
 }
 
-// run is the single event loop. It owns all mutable consensus state.
+// run is the single event loop. It owns all mutable consensus state. The timer
+// channels (electionCh, heartbeatCh) are re-read each iteration, so reassigning
+// them from a handler changes what the next select waits on; a nil channel
+// disables its case.
 func (n *Node) run() {
 	defer close(n.done)
+	n.resetElectionTimer() // arm the follower election timer at startup
 	for {
 		select {
 		case <-n.ctx.Done():
@@ -268,6 +325,14 @@ func (n *Node) run() {
 			env.resp <- n.handleAppendEntries(env.req)
 		case reply := <-n.statusCh:
 			reply <- n.snapshotStatus()
+		case <-n.electionCh:
+			n.onElectionTimeout()
+		case <-n.heartbeatCh:
+			n.onHeartbeat()
+		case vr := <-n.voteRespCh:
+			n.handleVoteResponse(vr)
+		case ar := <-n.appendRespCh:
+			n.handleAppendResponse(ar)
 		}
 	}
 }
@@ -332,6 +397,8 @@ func (n *Node) becomeFollower(term uint64, leaderID string) error {
 	}
 	n.role = RoleFollower
 	n.leaderID = leaderID
+	n.stopHeartbeat()
+	n.resetElectionTimer()
 	return nil
 }
 
@@ -347,11 +414,14 @@ func (n *Node) becomeCandidate() error {
 	n.votedFor = n.id
 	n.role = RoleCandidate
 	n.leaderID = ""
+	n.stopHeartbeat()
+	n.resetElectionTimer()
 	return nil
 }
 
-// becomeLeader initializes per-follower replication progress. Appending the
-// new-term no-op and starting heartbeats is implemented in Phase 5.
+// becomeLeader initializes per-follower replication progress and switches timers
+// from election to heartbeat. Appending the new-term no-op and sending the first
+// heartbeat is done by promoteToLeader.
 func (n *Node) becomeLeader() {
 	n.role = RoleLeader
 	n.leaderID = n.id
@@ -361,4 +431,6 @@ func (n *Node) becomeLeader() {
 		n.nextIndex[p] = n.lastLogIndex + 1
 		n.matchIndex[p] = 0
 	}
+	n.stopElectionTimer()
+	n.startHeartbeat()
 }
