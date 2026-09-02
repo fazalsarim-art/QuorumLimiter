@@ -300,9 +300,27 @@ when an idempotency key is supplied, since a keyless retry could double-charge.
 ### Wiring
 
 `main` now constructs the state machine, the HTTP transport, and the Raft node,
-then serves `/health/live`, `/v1/decisions`, and the private `/internal/raft/*`
-routes from one HTTP server. The node is stopped before storage closes on
-shutdown.
+then serves `/health/live`, `/v1/decisions`, the admin routes, and the private
+`/internal/raft/*` routes from one HTTP server. The node is stopped before
+storage closes on shutdown.
+
+## Admin authentication and mutation APIs (Phase 8)
+
+- **Sign-in** compares `QL_ADMIN_TOKEN` in constant time and issues an 8-hour
+  signed session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in production)
+  carrying a random CSRF token. All nodes share `QL_SESSION_KEY`, so a session
+  works on any node. Failed sign-ins are throttled to five per IP per minute.
+- **Mutations** require a valid session, a same-origin request, and a matching
+  `X-CSRF-Token` (double-submit against the signed session). Admin responses set
+  `Cache-Control: no-store` and security headers.
+- **Policy and client APIs** propose Raft commands and map the applied result to
+  HTTP: policy create (201) / update / activation (with `expected_version`
+  optimistic concurrency → 409 on conflict), and client create / revoke. Client
+  creation generates the raw key on the leader, replicates only the prefix and
+  HMAC digest, and returns the raw key **once**. Admin mutations write redacted
+  audit events keyed by log index; they contain no secrets.
+
+See `docs/security.md` for the full security model.
 
 ## Testing (`internal/testcluster`)
 

@@ -101,12 +101,15 @@ func run() int {
 
 	// HTTP handlers.
 	authn := auth.NewAPIKeyAuthenticator(cfg.APIKeyPepper, store)
+	sessions := auth.NewSessionManager(cfg.SessionKey, cfg.Production)
 	internalRaft := api.NewInternalRaftHandler(node, cfg.ClusterToken, otherPeerIDs, logger)
 	decisions := api.NewDecisionHandler(node, authn, cfg.NodeID, peerURLs, cfg.ProposalTimeout, logger)
+	admin := api.NewAdminHandler(sessions, cfg.AdminToken, node, authn, store, logger)
 
 	srv := server.New(cfg, logger,
 		func(mux *http.ServeMux) { api.RegisterInternalRaft(mux, internalRaft) },
 		func(mux *http.ServeMux) { api.RegisterDecision(mux, decisions) },
+		func(mux *http.ServeMux) { api.RegisterAdmin(mux, admin) },
 	)
 
 	// Run the server; a fatal listen error is reported on errCh.

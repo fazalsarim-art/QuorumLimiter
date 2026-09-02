@@ -129,6 +129,10 @@ func decodeClient(b []byte) (Client, error) {
 // read client records for API-key verification.
 func DecodeClient(b []byte) (Client, error) { return decodeClient(b) }
 
+// DecodePolicy decodes a stored policy record. Exported so the admin API can
+// list and render policies.
+func DecodePolicy(b []byte) (Policy, error) { return decodePolicy(b) }
+
 func decodeBucket(b []byte) (TokenBucketState, error) {
 	var s TokenBucketState
 	if err := json.Unmarshal(b, &s); err != nil {

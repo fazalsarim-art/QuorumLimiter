@@ -124,15 +124,15 @@ func reject(typ CommandType, code, msg string) (Result, error) {
 func (sm *StateMachine) applyTx(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	switch cmd.Type {
 	case CmdCreatePolicy:
-		return sm.applyCreatePolicy(tx, cmd)
+		return sm.applyCreatePolicy(tx, ctx, cmd)
 	case CmdUpdatePolicy:
-		return sm.applyUpdatePolicy(tx, cmd)
+		return sm.applyUpdatePolicy(tx, ctx, cmd)
 	case CmdSetPolicyActive:
-		return sm.applySetPolicyActive(tx, cmd)
+		return sm.applySetPolicyActive(tx, ctx, cmd)
 	case CmdCreateClient:
-		return sm.applyCreateClient(tx, cmd)
+		return sm.applyCreateClient(tx, ctx, cmd)
 	case CmdRevokeClient:
-		return sm.applyRevokeClient(tx, cmd)
+		return sm.applyRevokeClient(tx, ctx, cmd)
 	case CmdDecide:
 		return sm.applyDecide(tx, ctx, cmd)
 	case CmdPrune:
@@ -146,7 +146,7 @@ func (sm *StateMachine) applyTx(tx *storage.StateTx, ctx ApplyContext, cmd Comma
 
 // --- policy commands ---
 
-func (sm *StateMachine) applyCreatePolicy(tx *storage.StateTx, cmd Command) (Result, error) {
+func (sm *StateMachine) applyCreatePolicy(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	var p CreatePolicyPayload
 	if err := unmarshalPayload(cmd.Payload, &p); err != nil {
 		return Result{}, err
@@ -181,10 +181,13 @@ func (sm *StateMachine) applyCreatePolicy(tx *storage.StateTx, cmd Command) (Res
 	if err := putPolicy(tx, policy); err != nil {
 		return Result{}, err
 	}
+	if err := writeAdminAudit(tx, ctx, "policy_created", policy.ID, cmd.TimestampMS); err != nil {
+		return Result{}, err
+	}
 	return Result{Type: CmdCreatePolicy, Outcome: OutcomeApplied, Policy: &policy}, nil
 }
 
-func (sm *StateMachine) applyUpdatePolicy(tx *storage.StateTx, cmd Command) (Result, error) {
+func (sm *StateMachine) applyUpdatePolicy(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	var p UpdatePolicyPayload
 	if err := unmarshalPayload(cmd.Payload, &p); err != nil {
 		return Result{}, err
@@ -258,10 +261,13 @@ func (sm *StateMachine) applyUpdatePolicy(tx *storage.StateTx, cmd Command) (Res
 	if err := putPolicy(tx, newPolicy); err != nil {
 		return Result{}, err
 	}
+	if err := writeAdminAudit(tx, ctx, "policy_updated", newPolicy.ID, cmd.TimestampMS); err != nil {
+		return Result{}, err
+	}
 	return Result{Type: CmdUpdatePolicy, Outcome: OutcomeApplied, Policy: &newPolicy}, nil
 }
 
-func (sm *StateMachine) applySetPolicyActive(tx *storage.StateTx, cmd Command) (Result, error) {
+func (sm *StateMachine) applySetPolicyActive(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	var p SetPolicyActivePayload
 	if err := unmarshalPayload(cmd.Payload, &p); err != nil {
 		return Result{}, err
@@ -283,12 +289,19 @@ func (sm *StateMachine) applySetPolicyActive(tx *storage.StateTx, cmd Command) (
 	if err := putPolicy(tx, policy); err != nil {
 		return Result{}, err
 	}
+	event := "policy_deactivated"
+	if p.Active {
+		event = "policy_activated"
+	}
+	if err := writeAdminAudit(tx, ctx, event, policy.ID, cmd.TimestampMS); err != nil {
+		return Result{}, err
+	}
 	return Result{Type: CmdSetPolicyActive, Outcome: OutcomeApplied, Policy: &policy}, nil
 }
 
 // --- client commands ---
 
-func (sm *StateMachine) applyCreateClient(tx *storage.StateTx, cmd Command) (Result, error) {
+func (sm *StateMachine) applyCreateClient(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	var p CreateClientPayload
 	if err := unmarshalPayload(cmd.Payload, &p); err != nil {
 		return Result{}, err
@@ -335,10 +348,13 @@ func (sm *StateMachine) applyCreateClient(tx *storage.StateTx, cmd Command) (Res
 	if err := tx.PutClientPrefix(client.KeyPrefix, client.ID); err != nil {
 		return Result{}, err
 	}
+	if err := writeAdminAudit(tx, ctx, "client_created", "", cmd.TimestampMS); err != nil {
+		return Result{}, err
+	}
 	return Result{Type: CmdCreateClient, Outcome: OutcomeApplied, Client: &client}, nil
 }
 
-func (sm *StateMachine) applyRevokeClient(tx *storage.StateTx, cmd Command) (Result, error) {
+func (sm *StateMachine) applyRevokeClient(tx *storage.StateTx, ctx ApplyContext, cmd Command) (Result, error) {
 	var p RevokeClientPayload
 	if err := unmarshalPayload(cmd.Payload, &p); err != nil {
 		return Result{}, err
@@ -352,13 +368,17 @@ func (sm *StateMachine) applyRevokeClient(tx *storage.StateTx, cmd Command) (Res
 		return Result{}, err
 	}
 	if !client.Active {
-		// Already revoked: revocation is idempotent, so report success.
-		return Result{Type: CmdRevokeClient, Outcome: OutcomeApplied, Client: &client}, nil
+		// Already revoked: revocation is idempotent, so report success and flag
+		// it as a duplicate so the API can return already_revoked.
+		return Result{Type: CmdRevokeClient, Outcome: OutcomeApplied, Client: &client, Duplicate: true}, nil
 	}
 	client.Active = false
 	ts := cmd.TimestampMS
 	client.RevokedAtMS = &ts
 	if err := putClient(tx, client); err != nil {
+		return Result{}, err
+	}
+	if err := writeAdminAudit(tx, ctx, "client_revoked", "", cmd.TimestampMS); err != nil {
 		return Result{}, err
 	}
 	return Result{Type: CmdRevokeClient, Outcome: OutcomeApplied, Client: &client}, nil
@@ -592,6 +612,26 @@ func loadOrInitBucket(tx *storage.StateTx, policy Policy, subject string, nowMS 
 		RefillRemainder: 0,
 		PolicyVersion:   policy.Version,
 	}, nil
+}
+
+// writeAdminAudit records an admin mutation, keyed by the committed log index.
+// It never stores secrets (no keys, subjects, or tokens).
+func writeAdminAudit(tx *storage.StateTx, ctx ApplyContext, eventType, policyID string, ts int64) error {
+	audit := AuditEvent{
+		SchemaVersion: ModelSchemaVersion,
+		EventType:     eventType,
+		TimestampMS:   ts,
+		ActorType:     "admin",
+		ActorID:       "admin",
+		PolicyID:      policyID,
+		Term:          ctx.Term,
+		LogIndex:      ctx.LogIndex,
+	}
+	enc, err := encodeAudit(audit)
+	if err != nil {
+		return err
+	}
+	return tx.PutAudit(ctx.LogIndex, enc)
 }
 
 func putPolicy(tx *storage.StateTx, p Policy) error {

@@ -18,3 +18,20 @@ func RegisterInternalRaft(mux *http.ServeMux, h *InternalRaftHandler) {
 func RegisterDecision(mux *http.ServeMux, h *DecisionHandler) {
 	mux.HandleFunc("POST /v1/decisions", h.handleDecision)
 }
+
+// RegisterAdmin registers admin sign-in and the Raft-backed admin JSON APIs.
+// GET APIs require a session; mutating APIs also require same-origin + CSRF.
+func RegisterAdmin(mux *http.ServeMux, h *AdminHandler) {
+	mux.HandleFunc("GET /admin/login", h.handleLoginGet)
+	mux.HandleFunc("POST /admin/login", h.handleLoginPost)
+	mux.HandleFunc("POST /admin/logout", h.handleLogoutPost)
+
+	mux.HandleFunc("GET /api/admin/policies", h.requireAdmin(false, h.listPolicies))
+	mux.HandleFunc("POST /api/admin/policies", h.requireAdmin(true, h.createPolicy))
+	mux.HandleFunc("PUT /api/admin/policies/{id}", h.requireAdmin(true, h.updatePolicy))
+	mux.HandleFunc("POST /api/admin/policies/{id}/activation", h.requireAdmin(true, h.changeActivation))
+
+	mux.HandleFunc("GET /api/admin/clients", h.requireAdmin(false, h.listClients))
+	mux.HandleFunc("POST /api/admin/clients", h.requireAdmin(true, h.createClient))
+	mux.HandleFunc("POST /api/admin/clients/{id}/revoke", h.requireAdmin(true, h.revokeClient))
+}
