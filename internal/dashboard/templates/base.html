@@ -1,0 +1,39 @@
+{{define "base.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · QuorumLimiter</title>
+<link rel="stylesheet" href="/admin/static/app.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="topbar">
+  <span class="brand">QuorumLimiter</span>
+  {{if .Authed}}
+  <span class="topbar-meta">
+    node <strong>{{.TopBar.NodeID}}</strong> · {{.TopBar.Role}} · term {{.TopBar.Term}}
+    {{if .TopBar.LeaderID}} · leader {{.TopBar.LeaderID}}{{end}}
+  </span>
+  {{end}}
+</header>
+{{if .Authed}}
+<nav class="nav" aria-label="Admin sections">
+  <a href="/admin" {{if eq .Nav "overview"}}aria-current="page"{{end}}>Overview</a>
+  <a href="/admin/policies" {{if eq .Nav "policies"}}aria-current="page"{{end}}>Policies</a>
+  <a href="/admin/clients" {{if eq .Nav "clients"}}aria-current="page"{{end}}>API clients</a>
+  <a href="/admin/decisions" {{if eq .Nav "decisions"}}aria-current="page"{{end}}>Decisions</a>
+  <a href="/admin/cluster" {{if eq .Nav "cluster"}}aria-current="page"{{end}}>Cluster</a>
+  <a href="/admin/docs" {{if eq .Nav "docs"}}aria-current="page"{{end}}>API docs</a>
+  <form class="signout" method="post" action="/admin/logout">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit">Sign out</button>
+  </form>
+</nav>
+{{end}}
+<main id="main" class="content">
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}" role="status">{{.Flash.Message}}</div>{{end}}
+{{block "content" .}}{{end}}
+</main>
+</body>
+</html>{{end}}

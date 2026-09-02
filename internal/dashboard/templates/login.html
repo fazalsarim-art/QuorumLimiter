@@ -1,0 +1,13 @@
+{{define "content"}}
+<section class="card card-narrow">
+  <h1>Admin sign in</h1>
+  {{if .Data.Error}}<p class="field-error" role="alert">Sign in failed. Check your admin token and try again.</p>{{end}}
+  <form method="post" action="/admin/login" class="stack">
+    <div class="field">
+      <label for="admin_token">Admin token</label>
+      <input type="password" id="admin_token" name="admin_token" autocomplete="off" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+</section>
+{{end}}

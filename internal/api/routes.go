@@ -19,13 +19,10 @@ func RegisterDecision(mux *http.ServeMux, h *DecisionHandler) {
 	mux.HandleFunc("POST /v1/decisions", h.handleDecision)
 }
 
-// RegisterAdmin registers admin sign-in and the Raft-backed admin JSON APIs.
+// RegisterAdmin registers the Raft-backed admin JSON APIs under /api/admin.
 // GET APIs require a session; mutating APIs also require same-origin + CSRF.
+// Session sign-in lives in the dashboard package.
 func RegisterAdmin(mux *http.ServeMux, h *AdminHandler) {
-	mux.HandleFunc("GET /admin/login", h.handleLoginGet)
-	mux.HandleFunc("POST /admin/login", h.handleLoginPost)
-	mux.HandleFunc("POST /admin/logout", h.handleLogoutPost)
-
 	mux.HandleFunc("GET /api/admin/policies", h.requireAdmin(false, h.listPolicies))
 	mux.HandleFunc("POST /api/admin/policies", h.requireAdmin(true, h.createPolicy))
 	mux.HandleFunc("PUT /api/admin/policies/{id}", h.requireAdmin(true, h.updatePolicy))

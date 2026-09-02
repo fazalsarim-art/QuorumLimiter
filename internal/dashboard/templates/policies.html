@@ -1,0 +1,65 @@
+{{define "content"}}
+<h1>Policies</h1>
+
+<section class="card">
+  <h2>Create policy</h2>
+  <form method="post" action="/admin/policies" class="grid-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="field"><label for="p_id">Policy ID</label><input id="p_id" name="id" pattern="[a-z][a-z0-9_]{2,47}" required></div>
+    <div class="field"><label for="p_name">Name</label><input id="p_name" name="name" minlength="3" maxlength="64" required></div>
+    <div class="field"><label for="p_cap">Capacity (tokens)</label><input id="p_cap" name="capacity_tokens" type="number" min="1" max="1000000" value="5" required></div>
+    <div class="field"><label for="p_refill">Refill tokens</label><input id="p_refill" name="refill_tokens" type="number" min="1" max="1000000" value="1" required></div>
+    <div class="field"><label for="p_interval">Refill interval (ms)</label><input id="p_interval" name="refill_interval_ms" type="number" min="1000" max="86400000" value="12000" required></div>
+    <div class="field"><label for="p_maxcost">Max cost</label><input id="p_maxcost" name="max_cost_tokens" type="number" min="1" value="1" required></div>
+    <div class="field field-check"><label><input type="checkbox" name="active" value="true" checked> Active</label></div>
+    <button type="submit" class="btn btn-primary">Create policy</button>
+  </form>
+</section>
+
+<form method="get" action="/admin/policies" class="row-form filter">
+  <div class="field"><label for="f_q">Search</label><input id="f_q" name="q" value="{{.Data.Query}}"></div>
+  <div class="field"><label for="f_status">Status</label>
+    <select id="f_status" name="status">
+      <option value="" {{if eq .Data.Status ""}}selected{{end}}>All</option>
+      <option value="active" {{if eq .Data.Status "active"}}selected{{end}}>Active</option>
+      <option value="inactive" {{if eq .Data.Status "inactive"}}selected{{end}}>Inactive</option>
+    </select>
+  </div>
+  <button type="submit" class="btn">Filter</button>
+</form>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Name</th><th>ID</th><th>Capacity</th><th>Refill</th><th>Max cost</th><th>Status</th><th>Ver</th><th>Updated</th><th>Action</th></tr></thead>
+  <tbody>
+  {{range .Data.Policies}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td class="mono">{{.ID}}</td>
+      <td>{{.CapacityTokens}}</td>
+      <td>{{.RefillTokens}} / {{.RefillIntervalMS}}ms</td>
+      <td>{{.MaxCostTokens}}</td>
+      <td>{{if .Active}}<span class="badge badge-ok">active</span>{{else}}<span class="badge badge-off">inactive</span>{{end}}</td>
+      <td>{{.Version}}</td>
+      <td>{{msTime .UpdatedAtMS}}</td>
+      <td>
+        <form method="post" action="/admin/policies/{{.ID}}/activation">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="expected_version" value="{{.Version}}">
+          {{if .Active}}
+            <input type="hidden" name="active" value="false">
+            <button type="submit" class="btn btn-danger" data-confirm="Deactivate policy {{.ID}}?">Deactivate</button>
+          {{else}}
+            <input type="hidden" name="active" value="true">
+            <button type="submit" class="btn">Activate</button>
+          {{end}}
+        </form>
+      </td>
+    </tr>
+  {{else}}
+    <tr><td colspan="9" class="empty">No policies yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}

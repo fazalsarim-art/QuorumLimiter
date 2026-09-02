@@ -133,6 +133,16 @@ func DecodeClient(b []byte) (Client, error) { return decodeClient(b) }
 // list and render policies.
 func DecodePolicy(b []byte) (Policy, error) { return decodePolicy(b) }
 
+// DecodeAudit decodes a stored audit event. Exported so the dashboard can render
+// the recent-decisions page.
+func DecodeAudit(b []byte) (AuditEvent, error) {
+	var a AuditEvent
+	if err := json.Unmarshal(b, &a); err != nil {
+		return AuditEvent{}, fmt.Errorf("limiter: decode audit: %w", err)
+	}
+	return a, nil
+}
+
 func decodeBucket(b []byte) (TokenBucketState, error) {
 	var s TokenBucketState
 	if err := json.Unmarshal(b, &s); err != nil {

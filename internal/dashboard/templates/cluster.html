@@ -1,0 +1,31 @@
+{{define "content"}}
+<h1>Cluster</h1>
+<p class="hint">Read-only view of this node's consensus state. There are deliberately no force-leader, delete-log, or reset controls.</p>
+
+<div class="cards">
+  <div class="card stat"><span class="stat-label">Role</span><span class="stat-value">{{.Data.Status.Role}}</span></div>
+  <div class="card stat"><span class="stat-label">Term</span><span class="stat-value">{{.Data.Status.Term}}</span></div>
+  <div class="card stat"><span class="stat-label">Leader</span><span class="stat-value">{{if .Data.Status.LeaderID}}{{.Data.Status.LeaderID}}{{else}}none{{end}}</span></div>
+  <div class="card stat"><span class="stat-label">Last log</span><span class="stat-value">{{.Data.Status.LastLogIndex}} (t{{.Data.Status.LastLogTerm}})</span></div>
+  <div class="card stat"><span class="stat-label">Commit</span><span class="stat-value">{{.Data.Status.CommitIndex}}</span></div>
+  <div class="card stat"><span class="stat-label">Applied</span><span class="stat-value">{{.Data.Status.LastApplied}}</span></div>
+</div>
+
+{{if .Data.Status.Peers}}
+<section class="card">
+  <h2>Follower replication progress</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Peer</th><th>Next index</th><th>Match index</th></tr></thead>
+    <tbody>
+    {{range .Data.Status.Peers}}
+      <tr><td class="mono">{{.NodeID}}</td><td>{{.NextIndex}}</td><td>{{.MatchIndex}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+{{else}}
+<p>Peer replication progress is available on the leader.</p>
+{{end}}
+{{end}}

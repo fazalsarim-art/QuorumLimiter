@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>API examples</h1>
+<p class="hint">Replace the placeholder key and use a fresh Idempotency-Key for each new logical request.</p>
+
+<section class="card">
+  <h2>Make a decision</h2>
+  <pre class="code">curl -i {{.Data.BaseURL}}/v1/decisions \
+  -H 'Authorization: Bearer qlk_YOURPREFIX_your-secret' \
+  -H 'Idempotency-Key: 01JEXAMPLE00000000000000000' \
+  -H 'Content-Type: application/json' \
+  --data '{"policy_id":"password_reset","subject":"customer_4821","cost":1}'</pre>
+</section>
+
+<section class="card">
+  <h2>Response codes</h2>
+  <ul class="codes">
+    <li><strong>200</strong> — allowed; body includes remaining_milli and reset info.</li>
+    <li><strong>429</strong> — denied by the token bucket; retry after Retry-After seconds.</li>
+    <li><strong>401</strong> — missing, invalid, or revoked API key.</li>
+    <li><strong>404</strong> — policy not found or inactive.</li>
+    <li><strong>409</strong> — same Idempotency-Key reused with different content.</li>
+    <li><strong>422</strong> — invalid policy id, subject, cost, or idempotency key.</li>
+    <li><strong>503</strong> — no leader or quorum; retry.</li>
+    <li><strong>504</strong> — timed out awaiting commit; retry with the same Idempotency-Key.</li>
+  </ul>
+</section>
+{{end}}

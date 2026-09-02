@@ -19,6 +19,7 @@ import (
 	"github.com/fazalsarim-art/QuorumLimiter/internal/api"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/auth"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/config"
+	"github.com/fazalsarim-art/QuorumLimiter/internal/dashboard"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/limiter"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/raft"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/server"
@@ -104,12 +105,18 @@ func run() int {
 	sessions := auth.NewSessionManager(cfg.SessionKey, cfg.Production)
 	internalRaft := api.NewInternalRaftHandler(node, cfg.ClusterToken, otherPeerIDs, logger)
 	decisions := api.NewDecisionHandler(node, authn, cfg.NodeID, peerURLs, cfg.ProposalTimeout, logger)
-	admin := api.NewAdminHandler(sessions, cfg.AdminToken, node, authn, store, logger)
+	adminAPI := api.NewAdminHandler(sessions, node, authn, store, logger)
+	dash, err := dashboard.New(sessions, cfg.AdminToken, node, authn, store, cfg.PublicBaseURL, cfg.ProposalTimeout, logger)
+	if err != nil {
+		logger.Error("failed to build dashboard", slog.String("error", err.Error()))
+		return 1
+	}
 
 	srv := server.New(cfg, logger,
 		func(mux *http.ServeMux) { api.RegisterInternalRaft(mux, internalRaft) },
 		func(mux *http.ServeMux) { api.RegisterDecision(mux, decisions) },
-		func(mux *http.ServeMux) { api.RegisterAdmin(mux, admin) },
+		func(mux *http.ServeMux) { api.RegisterAdmin(mux, adminAPI) },
+		func(mux *http.ServeMux) { dash.Register(mux) },
 	)
 
 	// Run the server; a fatal listen error is reported on errCh.

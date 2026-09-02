@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Cluster overview</h1>
+<div class="cards">
+  <div class="card stat"><span class="stat-label">Leader</span><span class="stat-value">{{if .Data.LeaderID}}{{.Data.LeaderID}}{{else}}none{{end}}</span></div>
+  <div class="card stat"><span class="stat-label">Term</span><span class="stat-value">{{.Data.Term}}</span></div>
+  <div class="card stat"><span class="stat-label">This node</span><span class="stat-value">{{.Data.Role}}</span></div>
+  <div class="card stat"><span class="stat-label">Commit / applied</span><span class="stat-value">{{.Data.CommitIndex}} / {{.Data.LastApplied}}</span></div>
+  <div class="card stat"><span class="stat-label">Policies</span><span class="stat-value">{{.Data.PolicyCount}}</span></div>
+  <div class="card stat"><span class="stat-label">API clients</span><span class="stat-value">{{.Data.ClientCount}}</span></div>
+</div>
+
+<section class="card">
+  <h2>Recent decisions</h2>
+  <p>Of the last {{.Data.RecentTotal}} recorded decisions: <strong>{{.Data.AllowedRecent}}</strong> allowed, <strong>{{.Data.DeniedRecent}}</strong> denied.</p>
+</section>
+
+<section class="card">
+  <h2>Quick decision test</h2>
+  <p class="hint">This runs a real decision as the admin and changes bucket state.</p>
+  <form method="post" action="/admin/test-decisions" class="row-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="field">
+      <label for="t_policy">Policy</label>
+      <select id="t_policy" name="policy_id" required>
+        {{range .Data.Policies}}<option value="{{.ID}}">{{.Name}} ({{.ID}})</option>{{end}}
+      </select>
+    </div>
+    <div class="field">
+      <label for="t_subject">Subject</label>
+      <input type="text" id="t_subject" name="subject" value="demo_user_0042" required>
+    </div>
+    <div class="field">
+      <label for="t_cost">Cost</label>
+      <input type="number" id="t_cost" name="cost" value="1" min="1" required>
+    </div>
+    <button type="submit" class="btn">Run decision</button>
+  </form>
+</section>
+{{end}}

@@ -1,0 +1,54 @@
+{{define "content"}}
+<h1>API clients</h1>
+
+{{if .Data.NewKey}}
+<section class="card keypanel" role="alert">
+  <h2>New API key for {{.Data.NewClientID}}</h2>
+  <p class="warn">Copy this key now. It is shown once and cannot be recovered.</p>
+  <div class="keyrow">
+    <code id="new-key" class="mono keyvalue">{{.Data.NewKey}}</code>
+    <button type="button" class="btn" data-copy="#new-key">Copy key</button>
+  </div>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Create client</h2>
+  <form method="post" action="/admin/clients" class="grid-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="field"><label for="c_name">Name</label><input id="c_name" name="name" minlength="3" maxlength="80" required></div>
+    <div class="field field-check"><label><input type="checkbox" name="allow_all" value="true"> Allow all policies (*)</label></div>
+    <div class="field"><label for="c_policies">Allowed policy IDs (comma-separated)</label><input id="c_policies" name="allowed_policy_ids" placeholder="password_reset, login"></div>
+    <button type="submit" class="btn btn-primary">Create client</button>
+  </form>
+</section>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Name</th><th>Client ID</th><th>Key prefix</th><th>Policies</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+  <tbody>
+  {{range .Data.Clients}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td class="mono">{{.ID}}</td>
+      <td class="mono">{{.KeyPrefix}}</td>
+      <td>{{join .AllowedPolicyIDs ", "}}</td>
+      <td>{{if .Active}}<span class="badge badge-ok">active</span>{{else}}<span class="badge badge-off">revoked</span>{{end}}</td>
+      <td>{{msTime .CreatedAtMS}}</td>
+      <td>
+        {{if .Active}}
+        <form method="post" action="/admin/clients/{{.ID}}/revoke">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="confirm" value="true">
+          <button type="submit" class="btn btn-danger" data-confirm="Revoke client {{.ID}}? This cannot be undone.">Revoke</button>
+        </form>
+        {{else}}—{{end}}
+      </td>
+    </tr>
+  {{else}}
+    <tr><td colspan="7" class="empty">No clients yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}

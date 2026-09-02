@@ -322,6 +322,33 @@ storage closes on shutdown.
 
 See `docs/security.md` for the full security model.
 
+## Admin dashboard (`internal/dashboard`, Phase 9)
+
+A server-rendered admin UI built with `html/template`, with templates and static
+assets **embedded in the binary** (`go:embed`) so there are no missing files in a
+container and no external CDN assets.
+
+- **Pages**: login, overview, policies, API clients, decisions, cluster, and API
+  docs, composed from a shared base layout (top bar, navigation, flash messages,
+  a skip link, and a sign-out form). Templates receive prepared view models and
+  never touch storage.
+- **Auth**: the dashboard owns sign-in/out using the shared `SessionManager`;
+  unauthenticated page requests redirect to the login page.
+- **Forms without JavaScript**: every mutation is a same-origin form POST
+  carrying a hidden CSRF token, verified against the signed session. Successful
+  mutations use the post/redirect/get pattern with a one-shot flash cookie; a
+  newly created client key is rendered **only** in the immediate response (with
+  `no-store`), never after a redirect.
+- **Progressive enhancement**: a tiny vanilla `app.js` adds copy-to-clipboard and
+  confirmation dialogs; nothing essential depends on it. The Content-Security-
+  Policy is `default-src 'self'`, so all CSS/JS is same-origin and there are no
+  inline scripts or event handlers.
+- **Responsive & accessible**: CSS Grid/Flexbox with a mobile breakpoint, tables
+  scroll inside their own container, status is conveyed with text plus color,
+  focus outlines are visible, and user data is HTML-escaped.
+
+The `/api/admin/*` JSON APIs remain available for programmatic/testing use.
+
 ## Testing (`internal/testcluster`)
 
 An in-process cluster wires real storage and state machines behind a

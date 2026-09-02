@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Recent decisions</h1>
+<p class="hint">Subjects are stored only as a short one-way hash. The latest {{len .Data.Audits}} records are shown.</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Policy</th><th>Subject (hashed)</th><th>Result</th><th>Cost</th><th>Remaining</th><th>Term</th><th>Index</th></tr></thead>
+  <tbody>
+  {{range .Data.Audits}}
+    <tr>
+      <td>{{msTime .TimestampMS}}</td>
+      <td>{{.EventType}}</td>
+      <td>{{.ActorType}}</td>
+      <td class="mono">{{.PolicyID}}</td>
+      <td class="mono">{{if .SubjectHash}}{{.SubjectHash}}{{else}}—{{end}}</td>
+      <td>{{if eq .EventType "decision"}}{{if .Allowed}}<span class="badge badge-ok">allowed</span>{{else}}<span class="badge badge-off">denied</span>{{end}}{{else}}—{{end}}</td>
+      <td>{{if eq .EventType "decision"}}{{.CostTokens}}{{else}}—{{end}}</td>
+      <td>{{if eq .EventType "decision"}}{{tokens .RemainingMilli}}{{else}}—{{end}}</td>
+      <td>{{.Term}}</td>
+      <td>{{.LogIndex}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="10" class="empty">No decisions recorded yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}

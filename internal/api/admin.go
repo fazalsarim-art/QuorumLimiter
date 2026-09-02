@@ -2,14 +2,11 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fazalsarim-art/QuorumLimiter/internal/auth"
@@ -17,52 +14,44 @@ import (
 	"github.com/fazalsarim-art/QuorumLimiter/internal/raft"
 )
 
-// Login throttling: at most this many failures per source IP per window.
-const (
-	maxLoginFailures = 5
-	loginWindow      = time.Minute
-	maxThrottleIPs   = 10000
-)
-
-// AdminStore is the read surface the admin API needs. *storage.Store satisfies it.
+// AdminStore is the read surface the admin JSON API needs. *storage.Store
+// satisfies it.
 type AdminStore interface {
 	Policies() ([][]byte, error)
 	Clients() ([][]byte, error)
 	Policy(id string) ([]byte, bool, error)
 }
 
-// AdminHandler serves admin sign-in and the Raft-backed policy/client APIs.
+// AdminHandler serves the Raft-backed admin JSON APIs under /api/admin. Session
+// sign-in itself lives in the dashboard package; these handlers only validate an
+// existing session (and CSRF for mutations).
 type AdminHandler struct {
-	sessions   *auth.SessionManager
-	adminToken string
-	throttle   *loginThrottle
-	node       ProposerNode
-	authn      *auth.APIKeyAuthenticator
-	store      AdminStore
-	log        *slog.Logger
-	now        func() int64
+	sessions *auth.SessionManager
+	node     ProposerNode
+	authn    *auth.APIKeyAuthenticator
+	store    AdminStore
+	log      *slog.Logger
+	now      func() int64
 }
 
-// NewAdminHandler builds an admin handler.
-func NewAdminHandler(sessions *auth.SessionManager, adminToken string, node ProposerNode, authn *auth.APIKeyAuthenticator, store AdminStore, logger *slog.Logger) *AdminHandler {
+// NewAdminHandler builds an admin JSON handler.
+func NewAdminHandler(sessions *auth.SessionManager, node ProposerNode, authn *auth.APIKeyAuthenticator, store AdminStore, logger *slog.Logger) *AdminHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &AdminHandler{
-		sessions:   sessions,
-		adminToken: adminToken,
-		throttle:   newLoginThrottle(maxLoginFailures, loginWindow),
-		node:       node,
-		authn:      authn,
-		store:      store,
-		log:        logger.With(slog.String("component", "admin")),
-		now:        func() int64 { return time.Now().UnixMilli() },
+		sessions: sessions,
+		node:     node,
+		authn:    authn,
+		store:    store,
+		log:      logger.With(slog.String("component", "admin-api")),
+		now:      func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
-// --- security headers ---
-
-func adminHeaders(w http.ResponseWriter) {
+// AdminSecurityHeaders sets the security + no-store headers used on every admin
+// response (shared with the dashboard).
+func AdminSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -71,19 +60,17 @@ func adminHeaders(w http.ResponseWriter) {
 	h.Set("Content-Security-Policy", "default-src 'self'")
 }
 
-// --- authentication middleware ---
-
 // requireAdmin wraps a JSON admin handler, enforcing a valid session and, for
 // mutating requests, same-origin and a valid CSRF token.
 func (h *AdminHandler) requireAdmin(mutating bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		adminHeaders(w)
-		if _, err := h.sessions.FromRequest(r); err != nil {
+		AdminSecurityHeaders(w)
+		sess, err := h.sessions.FromRequest(r)
+		if err != nil {
 			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "admin session required", "")
 			return
 		}
 		if mutating {
-			sess, _ := h.sessions.FromRequest(r)
 			if !auth.SameOrigin(r) {
 				writeAPIError(w, http.StatusForbidden, "forbidden", "cross-origin request rejected", "")
 				return
@@ -95,73 +82,6 @@ func (h *AdminHandler) requireAdmin(mutating bool, next http.HandlerFunc) http.H
 		}
 		next(w, r)
 	}
-}
-
-// --- login / logout ---
-
-const loginPageHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width, initial-scale=1">` +
-	`<title>QuorumLimiter admin</title></head><body><h1>Admin sign in</h1>` +
-	`<form method="post" action="/admin/login">` +
-	`<label>Admin token <input type="password" name="admin_token" autocomplete="off"></label> ` +
-	`<button type="submit">Sign in</button></form></body></html>`
-
-func (h *AdminHandler) handleLoginGet(w http.ResponseWriter, r *http.Request) {
-	adminHeaders(w)
-	if _, err := h.sessions.FromRequest(r); err == nil {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(loginPageHTML))
-}
-
-func (h *AdminHandler) handleLoginPost(w http.ResponseWriter, r *http.Request) {
-	adminHeaders(w)
-	ip := clientIP(r)
-	if h.throttle.blocked(ip) {
-		writeAPIError(w, http.StatusTooManyRequests, "rate_limited", "too many sign-in attempts", "")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "could not parse form", "")
-		return
-	}
-	token := r.PostFormValue("admin_token")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.adminToken)) != 1 {
-		h.throttle.fail(ip)
-		// Generic failure: never reveal whether the token was close.
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(loginPageHTML))
-		return
-	}
-	h.throttle.reset(ip)
-	sess, err := h.sessions.Issue()
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "internal", "could not create session", "")
-		return
-	}
-	http.SetCookie(w, h.sessions.SessionCookie(sess))
-	http.SetCookie(w, h.sessions.CSRFCookie(sess))
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
-}
-
-func (h *AdminHandler) handleLogoutPost(w http.ResponseWriter, r *http.Request) {
-	adminHeaders(w)
-	sess, err := h.sessions.FromRequest(r)
-	if err != nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
-		return
-	}
-	if !auth.SameOrigin(r) || !auth.VerifyCSRFToken(sess, r.Header.Get("X-CSRF-Token")) {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "invalid CSRF token or origin", "")
-		return
-	}
-	for _, c := range h.sessions.ClearCookies() {
-		http.SetCookie(w, c)
-	}
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 
 // --- policy API ---
@@ -364,7 +284,6 @@ func (h *AdminHandler) createClient(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body", "")
 		return
 	}
-	// Generate the raw key on the leader; only prefix + digest are replicated.
 	rawKey, prefix, err := auth.GenerateAPIKey()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal", "key generation failed", "")
@@ -390,7 +309,6 @@ func (h *AdminHandler) createClient(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case res.Outcome == limiter.OutcomeApplied:
-		// Return the raw key exactly once (adminHeaders already set no-store).
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"client":  toClientView(*res.Client),
 			"api_key": rawKey,
@@ -481,62 +399,4 @@ func decodeAdminBody(w http.ResponseWriter, r *http.Request, dst any) error {
 		return errors.New("unexpected trailing data")
 	}
 	return nil
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-// --- login throttle ---
-
-type loginThrottle struct {
-	mu       sync.Mutex
-	failures map[string][]int64
-	max      int
-	window   time.Duration
-	now      func() time.Time
-}
-
-func newLoginThrottle(max int, window time.Duration) *loginThrottle {
-	return &loginThrottle{failures: make(map[string][]int64), max: max, window: window, now: time.Now}
-}
-
-func (t *loginThrottle) fail(ip string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if len(t.failures) > maxThrottleIPs {
-		t.failures = make(map[string][]int64) // bound memory: reset under flood
-	}
-	now := t.now().UnixMilli()
-	t.failures[ip] = append(t.prune(t.failures[ip], now), now)
-}
-
-func (t *loginThrottle) blocked(ip string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.now().UnixMilli()
-	recent := t.prune(t.failures[ip], now)
-	t.failures[ip] = recent
-	return len(recent) >= t.max
-}
-
-func (t *loginThrottle) reset(ip string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.failures, ip)
-}
-
-func (t *loginThrottle) prune(times []int64, now int64) []int64 {
-	cutoff := now - t.window.Milliseconds()
-	kept := times[:0]
-	for _, ts := range times {
-		if ts >= cutoff {
-			kept = append(kept, ts)
-		}
-	}
-	return kept
 }
