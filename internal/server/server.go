@@ -30,11 +30,16 @@ type Server struct {
 }
 
 // New builds a Server with the configured bind address, timeouts, and routes.
-func New(cfg *config.Config, log *slog.Logger) *Server {
+// Additional route groups (public, admin, internal) are attached via registrars,
+// which run after the built-in health route.
+func New(cfg *config.Config, log *slog.Logger, registrars ...func(*http.ServeMux)) *Server {
 	s := &Server{log: log, nodeID: cfg.NodeID}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.handleLive)
+	for _, register := range registrars {
+		register(mux)
+	}
 
 	s.http = &http.Server{
 		Addr:              cfg.BindAddr,

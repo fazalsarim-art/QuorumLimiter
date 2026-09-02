@@ -271,7 +271,40 @@ waiter.
 entries (`lastApplied+1..commitIndex`) before serving requests, so a node that
 crashed between commit and apply recovers its full state.
 
-### Testing (`internal/testcluster`)
+## Public decision API (`internal/api`, Phase 7)
+
+`POST /v1/decisions` is the public entry point, callable on any node.
+
+- **Auth.** The leader authenticates the client API key: it parses the
+  `qlk_<prefix>_<secret>` key, looks the client up by prefix, recomputes the
+  HMAC-SHA256 of the whole key with `QL_API_KEY_PEPPER`, and compares it to the
+  stored digest in **constant time**. Failures return a generic 401 (no oracle),
+  including a revoked client.
+- **Validation.** JSON content-type, a required `Idempotency-Key`, a 64 KiB body
+  cap with unknown fields rejected, and format checks on policy id, subject,
+  cost, and idempotency key (422 before proposing).
+- **Forwarding.** A follower forwards the request to the current leader over the
+  private network, preserving `Authorization`, the idempotency key, and the
+  original content-type, and marking it `X-QL-Forwarded` so it is never forwarded
+  twice (loop prevention). With no known leader it returns 503 + `Retry-After`.
+- **Propose & map.** The leader builds a decision command (stamping its observed
+  time), proposes it, and waits for the committed apply result, which it maps to
+  stable HTTP: 200 allowed, 429 denied (+`Retry-After`), 404/409/422/403 for
+  rejections, 503 for no leader/quorum, and 504 for a proposal timeout. Every
+  response carries `X-Request-ID`. A 504 caller must retry with the same
+  idempotency key.
+
+The `pkg/client` Go client mirrors this: it retries 503/504/network errors only
+when an idempotency key is supplied, since a keyless retry could double-charge.
+
+### Wiring
+
+`main` now constructs the state machine, the HTTP transport, and the Raft node,
+then serves `/health/live`, `/v1/decisions`, and the private `/internal/raft/*`
+routes from one HTTP server. The node is stopped before storage closes on
+shutdown.
+
+## Testing (`internal/testcluster`)
 
 An in-process cluster wires real storage and state machines behind a
 `FaultTransport` whose directed links can be cut to simulate (possibly

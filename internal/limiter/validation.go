@@ -81,6 +81,25 @@ func validateRequestID(id string) error {
 	return nil
 }
 
+// ValidateDecisionInput validates the public fields of a decision request. It is
+// the API-facing pre-check that lets the handler return 422 before proposing;
+// the state machine re-validates authoritatively (including cost vs policy max).
+func ValidateDecisionInput(policyID, subject, requestID string, cost int64) error {
+	if err := validatePolicyID(policyID); err != nil {
+		return err
+	}
+	if err := validateSubject(subject); err != nil {
+		return err
+	}
+	if err := validateRequestID(requestID); err != nil {
+		return err
+	}
+	if cost < 1 {
+		return fmt.Errorf("cost must be at least 1")
+	}
+	return nil
+}
+
 // validateAllowedPolicies checks the allowed-policy list: either exactly ["*"]
 // or 1..100 unique policy IDs.
 func validateAllowedPolicies(ids []string) error {

@@ -125,6 +125,10 @@ func decodeClient(b []byte) (Client, error) {
 	return c, nil
 }
 
+// DecodeClient decodes a stored client record. Exported so the auth layer can
+// read client records for API-key verification.
+func DecodeClient(b []byte) (Client, error) { return decodeClient(b) }
+
 func decodeBucket(b []byte) (TokenBucketState, error) {
 	var s TokenBucketState
 	if err := json.Unmarshal(b, &s); err != nil {

@@ -154,14 +154,10 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
+// writeError writes the stable error envelope with only a code (internal
+// endpoints carry no user-facing message or request id).
 func writeError(w http.ResponseWriter, status int, code string) {
-	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code}})
+	writeAPIError(w, status, code, "", "")
 }
 
 // --- HTTP transport (client side) ---

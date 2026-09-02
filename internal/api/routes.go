@@ -13,3 +13,8 @@ func RegisterInternalRaft(mux *http.ServeMux, h *InternalRaftHandler) {
 	mux.HandleFunc("POST /internal/raft/append-entries", h.handleAppendEntries)
 	mux.HandleFunc("GET /internal/raft/status", h.handleStatus)
 }
+
+// RegisterDecision registers the public decision endpoint on mux.
+func RegisterDecision(mux *http.ServeMux, h *DecisionHandler) {
+	mux.HandleFunc("POST /v1/decisions", h.handleDecision)
+}
