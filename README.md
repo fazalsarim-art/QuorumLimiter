@@ -13,9 +13,34 @@ send another password-reset email under a 5-per-minute policy?"). Every state-ch
 decision is committed to a replicated log by a majority of nodes before it is applied and
 returned, so three independent servers can never collectively over-allow.
 
+## Quick start (Docker Compose)
+
+Runs a three-node cluster behind a Caddy gateway, plus Prometheus.
+
+```bash
+# 1. Provide shared secrets for the cluster.
+cp deploy/.env.example deploy/.env
+# then edit deploy/.env and set the four secrets (see the file for openssl commands)
+
+# 2. Build the image and start the cluster.
+docker compose -f deploy/compose.dev.yml --env-file deploy/.env up -d --build
+
+# 3. Check health (through the gateway) and find the leader.
+curl -fsS http://localhost:8080/health/live
+docker compose -f deploy/compose.dev.yml --env-file deploy/.env ps
+
+# 4. Stop the cluster (keep data).
+docker compose -f deploy/compose.dev.yml --env-file deploy/.env down
+```
+
+The gateway is the only public port (`8080`). Node debug ports and Prometheus
+(`9090`) bind to loopback, and `/internal/*` and `/metrics` are blocked at the
+gateway. The admin dashboard is at `http://localhost:8080/admin`. See
+`docs/api.md` for the decision API and `docs/architecture.md` for the design.
+
 ## Planned stack
 
-Go 1.26.5 · bbolt · Prometheus · Docker + Compose · Caddy
+Go 1.26.5 · bbolt · Prometheus 3.13.1 · Docker + Compose · Caddy 2.11.4
 
 > **Note:** this is an educational Raft implementation with fixed three-node membership. It
 > demonstrates consensus mechanics and failure handling; it is not a substitute for a

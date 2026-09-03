@@ -1,0 +1,118 @@
+# Local three-node QuorumLimiter cluster with a Caddy gateway and Prometheus.
+# Shared secrets come from an .env file in this directory (see .env.example);
+# they are never baked into the image.
+name: quorumlimiter
+
+x-node-base: &node-base
+  image: quorumlimiter:dev
+  restart: unless-stopped
+  networks: [ql]
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 10s
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/live"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+    start_period: 5s
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 256M
+
+x-node-env: &node-env
+  QL_CLUSTER_ID: quorumlimiter-local
+  QL_PEERS: node1=http://node1:8080,node2=http://node2:8080,node3=http://node3:8080
+  QL_BIND_ADDR: ":8080"
+  QL_DATA_PATH: /data/quorumlimiter.db
+  QL_ELECTION_TIMEOUT_MIN: 800ms
+  QL_ELECTION_TIMEOUT_MAX: 1400ms
+  QL_HEARTBEAT_INTERVAL: 200ms
+  QL_PROPOSAL_TIMEOUT: 3s
+  QL_PUBLIC_BASE_URL: http://localhost:8080
+  QL_PRODUCTION: "false"
+  QL_LOG_LEVEL: info
+  QL_CLUSTER_TOKEN: ${QL_CLUSTER_TOKEN:?set QL_CLUSTER_TOKEN in deploy/.env}
+  QL_ADMIN_TOKEN: ${QL_ADMIN_TOKEN:?set QL_ADMIN_TOKEN in deploy/.env}
+  QL_SESSION_KEY: ${QL_SESSION_KEY:?set QL_SESSION_KEY in deploy/.env}
+  QL_API_KEY_PEPPER: ${QL_API_KEY_PEPPER:?set QL_API_KEY_PEPPER in deploy/.env}
+
+services:
+  node1:
+    <<: *node-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: dev
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node1
+      QL_ADVERTISE_URL: http://node1:8080
+    volumes:
+      - node1_data:/data
+    ports:
+      - "127.0.0.1:18081:8080" # loopback debug only
+
+  node2:
+    <<: *node-base
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node2
+      QL_ADVERTISE_URL: http://node2:8080
+    volumes:
+      - node2_data:/data
+    ports:
+      - "127.0.0.1:18082:8080"
+
+  node3:
+    <<: *node-base
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node3
+      QL_ADVERTISE_URL: http://node3:8080
+    volumes:
+      - node3_data:/data
+    ports:
+      - "127.0.0.1:18083:8080"
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    networks: [ql]
+    depends_on: [node1, node2, node3]
+    ports:
+      - "8080:8080" # the only public entrypoint
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    restart: unless-stopped
+    networks: [ql]
+    depends_on: [node1, node2, node3]
+    ports:
+      - "127.0.0.1:9090:9090" # loopback only
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom_data:/prometheus
+
+networks:
+  ql: {}
+
+volumes:
+  node1_data: {}
+  node2_data: {}
+  node3_data: {}
+  caddy_data: {}
+  caddy_config: {}
+  prom_data: {}

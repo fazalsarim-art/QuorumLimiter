@@ -385,6 +385,24 @@ Role and term changes, leader changes, and granted votes are logged as JSON
 events; heartbeats are not logged (they are counted in metrics instead).
 Authorization headers, cookies, subjects, and one-time keys are never logged.
 
+## Local deployment (Phase 11)
+
+A multi-stage `Dockerfile` compiles a static binary (`CGO_ENABLED=0`, trimmed)
+and ships it on `alpine:3.23` as a **nonroot** user (uid 10001) with `/data`
+owned by that user; the image is ~33 MB.
+
+`deploy/compose.dev.yml` runs three node containers, a Caddy gateway, and
+Prometheus on a private bridge network. Each node has its own named volume, a
+health check on `/health/live`, a read-only root filesystem with `/tmp` as
+tmpfs, all Linux capabilities dropped, `no-new-privileges`, and CPU/memory
+limits. Shared secrets come from `deploy/.env` (git-ignored) via `${...}`
+substitution — never baked into the image. Only Caddy publishes a public port
+(`8080`); node debug ports and Prometheus (`9090`) bind to loopback. The
+`deploy/Caddyfile` load-balances public and admin routes across the nodes and
+**returns 404 for `/internal/*` and `/metrics`**, which must never be public.
+Its site address defaults to `:8080` (HTTP) and is switched to a domain (with
+automatic HTTPS) in production (Phase 14).
+
 ## Testing (`internal/testcluster`)
 
 An in-process cluster wires real storage and state machines behind a

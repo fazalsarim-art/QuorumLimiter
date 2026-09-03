@@ -1,0 +1,23 @@
+# Caddy gateway for QuorumLimiter. The site address defaults to :8080 (plain
+# HTTP for local development); in production set QL_SITE_ADDRESS to your domain
+# and Caddy will provision HTTPS automatically (see docs/deployment.md, Phase 14).
+{$QL_SITE_ADDRESS::8080} {
+	encode zstd gzip
+
+	# The internal Raft RPCs and metrics must never be reachable publicly.
+	@private path /internal/* /metrics
+	respond @private 404
+
+	reverse_proxy node1:8080 node2:8080 node3:8080 {
+		lb_policy round_robin
+		health_uri /health/live
+		health_interval 5s
+		fail_duration 10s
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}
