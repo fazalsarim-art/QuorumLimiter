@@ -24,6 +24,9 @@ func (n *Node) applyCommitted() {
 		}
 		n.lastApplied = idx
 		if w, ok := n.waiters[idx]; ok {
+			if n.metrics != nil && w.startMS > 0 {
+				n.metrics.ObserveProposalSeconds(float64(n.nowMS()-w.startMS) / 1000)
+			}
 			w.ch <- applyOutcome{result: result}
 			delete(n.waiters, idx)
 		}

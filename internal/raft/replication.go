@@ -73,6 +73,8 @@ func (n *Node) handleAppendResponse(ar appendResult) {
 	if n.role != RoleLeader || ar.term != n.currentTerm {
 		return
 	}
+	// A reply (success or a benign conflict) is proof of contact with this peer.
+	n.peerContactMS[ar.peer] = n.nowMS()
 	if ar.resp.Success {
 		if ar.resp.MatchIndex > n.matchIndex[ar.peer] {
 			n.matchIndex[ar.peer] = ar.resp.MatchIndex

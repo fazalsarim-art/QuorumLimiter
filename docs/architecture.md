@@ -349,6 +349,42 @@ container and no external CDN assets.
 
 The `/api/admin/*` JSON APIs remain available for programmatic/testing use.
 
+## Health, readiness, and metrics (Phase 10)
+
+### Health
+
+- `GET /health/live` — process liveness only; 200 whenever the process runs.
+- `GET /health/ready` — 200 only when the node can safely participate, 503
+  otherwise, with a state: `shutting_down`, `starting`, `no_leader`, `no_quorum`,
+  `lagging`, or `ready`. A leader is ready only if it contacted a quorum
+  recently (tracked from follower AppendEntries replies); a follower is ready
+  only if it has heard from the leader recently and is not too far behind on
+  applying. During shutdown the node is marked draining so readiness fails fast
+  and a load balancer drains it before it stops.
+
+### Metrics (`internal/metrics`)
+
+`GET /metrics` serves Prometheus text from an **injectable registry** (tests use
+their own). All labels are **bounded** — `node` is a constant label, routes fold
+into a small fixed set, and API keys, request ids, subjects, client ids, and raw
+paths are never used as labels. Collectors:
+
+- request count + duration by route/method/status class (HTTP middleware),
+- decisions by result, elections, Raft RPCs by type/result, proposal-to-apply
+  latency,
+- role, term, commit/applied/last-log indexes, apply lag, bbolt size, and
+  seconds since last quorum contact (refreshed by a periodic collector).
+
+`deploy/prometheus.yml` scrapes all three nodes; `deploy/alerts.yml` provides
+starter alerts (no leader, election churn, apply lag, stale quorum contact,
+elevated 5xx). The `/metrics` route is private and must not be exposed publicly.
+
+### Structured logging
+
+Role and term changes, leader changes, and granted votes are logged as JSON
+events; heartbeats are not logged (they are counted in metrics instead).
+Authorization headers, cookies, subjects, and one-time keys are never logged.
+
 ## Testing (`internal/testcluster`)
 
 An in-process cluster wires real storage and state machines behind a

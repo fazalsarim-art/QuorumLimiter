@@ -67,7 +67,7 @@ func testAuthenticator(t *testing.T, allowed []string, active bool) *auth.APIKey
 func decisionServer(t *testing.T, node ProposerNode, authn *auth.APIKeyAuthenticator, peerURLs map[string]string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	h := NewDecisionHandler(node, authn, "node1", peerURLs, 0, nil)
+	h := NewDecisionHandler(node, authn, "node1", peerURLs, 0, nil, nil)
 	RegisterDecision(mux, h)
 	s := httptest.NewServer(mux)
 	t.Cleanup(s.Close)

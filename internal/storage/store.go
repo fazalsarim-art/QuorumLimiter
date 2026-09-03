@@ -55,6 +55,16 @@ func (s *Store) Close() error {
 // Path returns the database file path.
 func (s *Store) Path() string { return s.db.Path() }
 
+// SizeBytes returns the on-disk size of the database (from the file's size), or
+// 0 if it cannot be read.
+func (s *Store) SizeBytes() int64 {
+	info, err := os.Stat(s.db.Path())
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 // StoredSchemaVersion returns the schema version recorded in the database.
 func (s *Store) StoredSchemaVersion() (uint64, error) {
 	return s.getMetaU64(metaSchemaVersion)

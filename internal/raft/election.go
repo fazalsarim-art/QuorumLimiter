@@ -79,6 +79,9 @@ func (n *Node) startElection() {
 	}
 	term := n.currentTerm
 	n.votesGranted = 1 // vote for self
+	if n.metrics != nil {
+		n.metrics.IncElection()
+	}
 
 	req := RequestVoteRequest{
 		ProtocolVersion: ProtocolVersion,
@@ -102,6 +105,7 @@ func (n *Node) sendRequestVote(peer string, term uint64, req RequestVoteRequest)
 	ctx, cancel := context.WithTimeout(n.ctx, n.rpcTimeout)
 	defer cancel()
 	resp, err := n.transport.SendRequestVote(ctx, peer, req)
+	n.incRPC("request_vote", rpcResult(err))
 	select {
 	case n.voteRespCh <- voteResult{term: term, resp: resp, err: err}:
 	case <-n.ctx.Done():
@@ -166,8 +170,16 @@ func (n *Node) sendAppendEntries(peer string, term uint64, req AppendEntriesRequ
 	ctx, cancel := context.WithTimeout(n.ctx, n.rpcTimeout)
 	defer cancel()
 	resp, err := n.transport.SendAppendEntries(ctx, peer, req)
+	n.incRPC("append_entries", rpcResult(err))
 	select {
 	case n.appendRespCh <- appendResult{peer: peer, term: term, resp: resp, err: err}:
 	case <-n.ctx.Done():
 	}
+}
+
+func rpcResult(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
 }

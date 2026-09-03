@@ -1,6 +1,9 @@
 package raft
 
-import "context"
+import (
+	"context"
+	"log/slog"
+)
 
 // HandleRequestVote processes an incoming RequestVote RPC by routing it through
 // the event loop, so all state access stays single-threaded.
@@ -74,6 +77,7 @@ func (n *Node) handleRequestVote(req RequestVoteRequest) RequestVoteResponse {
 			return resp
 		}
 		resp.VoteGranted = true
+		n.log.Info("granted vote", slog.String("candidate", req.CandidateID), slog.Uint64("term", n.currentTerm))
 		n.resetElectionTimer() // granting a vote defers our own election
 	}
 	return resp
@@ -103,6 +107,7 @@ func (n *Node) handleAppendEntries(req AppendEntriesRequest) AppendEntriesRespon
 		return resp
 	}
 	resp.Term = n.currentTerm
+	n.lastLeaderContactMS = n.nowMS() // valid contact from the current leader
 
 	// Log consistency: the follower must contain prevLogIndex with prevLogTerm.
 	if req.PrevLogIndex > n.lastLogIndex {

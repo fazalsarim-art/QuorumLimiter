@@ -10,7 +10,8 @@ type applyOutcome struct {
 
 // waiter is a registered proposal awaiting its entry's apply result.
 type waiter struct {
-	ch chan applyOutcome
+	ch      chan applyOutcome
+	startMS int64
 }
 
 // proposeEnvelope carries a proposal into the event loop and returns the
@@ -81,7 +82,7 @@ func (n *Node) handlePropose(env proposeEnvelope) {
 	n.lastLogIndex = index
 	n.lastLogTerm = n.currentTerm
 
-	w := &waiter{ch: make(chan applyOutcome, 1)}
+	w := &waiter{ch: make(chan applyOutcome, 1), startMS: n.nowMS()}
 	n.waiters[index] = w
 	env.resp <- proposeRegistration{index: index, ch: w.ch}
 

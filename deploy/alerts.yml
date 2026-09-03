@@ -1,0 +1,50 @@
+# Initial alerting rules for QuorumLimiter. Tune thresholds to your hardware and
+# traffic before relying on them.
+groups:
+  - name: quorumlimiter
+    rules:
+      - alert: NoLeader
+        # No node reports the leader role across the cluster.
+        expr: sum(quorumlimiter_raft_role{role="leader"}) < 1
+        for: 15s
+        labels: { severity: critical }
+        annotations:
+          summary: "QuorumLimiter has no leader"
+          description: "No node has reported the leader role for 15s (possible loss of quorum)."
+
+      - alert: FrequentElections
+        # Sustained election churn suggests instability (flapping leader).
+        expr: sum(rate(quorumlimiter_raft_elections_total[1m])) > 0.5
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Frequent Raft elections"
+          description: "Elections are starting faster than once every two seconds on average."
+
+      - alert: ApplyLagHigh
+        expr: max(quorumlimiter_raft_apply_lag) > 1000
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "A node is far behind on applying committed entries"
+          description: "commit_index - last_applied has exceeded 1000 for 2m."
+
+      - alert: QuorumContactStale
+        # The leader has not confirmed contact with a quorum recently.
+        expr: quorumlimiter_raft_last_quorum_contact_seconds > 5
+        for: 30s
+        labels: { severity: critical }
+        annotations:
+          summary: "Leader has lost recent quorum contact"
+          description: "Seconds since last quorum contact exceeded 5 for 30s."
+
+      - alert: HighUnexpectedResponses
+        # 5xx rate as a fraction of all requests.
+        expr: >
+          sum(rate(quorumlimiter_http_requests_total{status_class="5xx"}[5m]))
+          / clamp_min(sum(rate(quorumlimiter_http_requests_total[5m])), 1) > 0.01
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Elevated 5xx responses"
+          description: "More than 1% of HTTP responses were 5xx over 5m."

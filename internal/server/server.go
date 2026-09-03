@@ -1,10 +1,9 @@
-// Package server wires up the node's HTTP server: timeouts, route registration,
-// and lifecycle. In Phase 1 it serves only the liveness endpoint; later phases
-// register the public, admin, health, metrics, and internal route groups.
+// Package server wraps a provided HTTP handler with bounded timeouts and a
+// graceful lifecycle. Route registration (health, public, admin, internal,
+// metrics) is done by the caller, which passes the finished handler here.
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -22,34 +21,26 @@ const (
 	idleTimeout       = 60 * time.Second
 )
 
-// Server owns the node's *http.Server and its dependencies.
+// Server owns the node's *http.Server and its lifecycle.
 type Server struct {
-	http   *http.Server
-	log    *slog.Logger
-	nodeID string
+	http *http.Server
+	log  *slog.Logger
 }
 
-// New builds a Server with the configured bind address, timeouts, and routes.
-// Additional route groups (public, admin, internal) are attached via registrars,
-// which run after the built-in health route.
-func New(cfg *config.Config, log *slog.Logger, registrars ...func(*http.ServeMux)) *Server {
-	s := &Server{log: log, nodeID: cfg.NodeID}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health/live", s.handleLive)
-	for _, register := range registrars {
-		register(mux)
+// New builds a Server that serves handler at the configured bind address with
+// bounded timeouts.
+func New(cfg *config.Config, log *slog.Logger, handler http.Handler) *Server {
+	return &Server{
+		log: log,
+		http: &http.Server{
+			Addr:              cfg.BindAddr,
+			Handler:           handler,
+			ReadHeaderTimeout: readHeaderTimeout,
+			ReadTimeout:       readTimeout,
+			WriteTimeout:      writeTimeout,
+			IdleTimeout:       idleTimeout,
+		},
 	}
-
-	s.http = &http.Server{
-		Addr:              cfg.BindAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
-	}
-	return s
 }
 
 // Addr returns the address the server is configured to listen on.
@@ -62,15 +53,4 @@ func (s *Server) Start() error {
 		return err
 	}
 	return nil
-}
-
-// handleLive reports process liveness. It never consults consensus state, so it
-// returns 200 whenever the HTTP process is running.
-func (s *Server) handleLive(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status":  "alive",
-		"node_id": s.nodeID,
-	})
 }

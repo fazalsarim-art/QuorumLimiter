@@ -93,13 +93,15 @@ type PeerProgress struct {
 
 // Status is an immutable snapshot of a node's consensus state.
 type Status struct {
-	NodeID       string         `json:"node_id"`
-	Role         Role           `json:"role"`
-	Term         uint64         `json:"term"`
-	LeaderID     string         `json:"leader_id"`
-	LastLogIndex uint64         `json:"last_log_index"`
-	LastLogTerm  uint64         `json:"last_log_term"`
-	CommitIndex  uint64         `json:"commit_index"`
-	LastApplied  uint64         `json:"last_applied"`
-	Peers        []PeerProgress `json:"peers,omitempty"`
+	NodeID              string         `json:"node_id"`
+	Role                Role           `json:"role"`
+	Term                uint64         `json:"term"`
+	LeaderID            string         `json:"leader_id"`
+	LastLogIndex        uint64         `json:"last_log_index"`
+	LastLogTerm         uint64         `json:"last_log_term"`
+	CommitIndex         uint64         `json:"commit_index"`
+	LastApplied         uint64         `json:"last_applied"`
+	LastLeaderContactMS int64          `json:"last_leader_contact_ms,omitempty"`
+	LastQuorumContactMS int64          `json:"last_quorum_contact_ms,omitempty"`
+	Peers               []PeerProgress `json:"peers,omitempty"`
 }

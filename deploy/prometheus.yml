@@ -1,0 +1,18 @@
+# Prometheus scrape configuration for a local three-node QuorumLimiter cluster.
+# In Compose (Phase 11) the targets are the node service names; the /metrics
+# endpoint is private and must not be exposed through the public gateway.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: quorumlimiter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - node1:8080
+          - node2:8080
+          - node3:8080

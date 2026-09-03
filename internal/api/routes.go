@@ -19,6 +19,17 @@ func RegisterDecision(mux *http.ServeMux, h *DecisionHandler) {
 	mux.HandleFunc("POST /v1/decisions", h.handleDecision)
 }
 
+// RegisterHealth registers the liveness and readiness endpoints on mux.
+func RegisterHealth(mux *http.ServeMux, h *HealthHandler) {
+	mux.HandleFunc("GET /health/live", h.handleLive)
+	mux.HandleFunc("GET /health/ready", h.handleReady)
+}
+
+// RegisterMetrics registers the Prometheus metrics endpoint on mux.
+func RegisterMetrics(mux *http.ServeMux, handler http.Handler) {
+	mux.Handle("GET /metrics", handler)
+}
+
 // RegisterAdmin registers the Raft-backed admin JSON APIs under /api/admin.
 // GET APIs require a session; mutating APIs also require same-origin + CSRF.
 // Session sign-in lives in the dashboard package.

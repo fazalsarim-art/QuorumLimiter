@@ -28,6 +28,11 @@ type ProposerNode interface {
 	Propose(ctx context.Context, command []byte) (any, error)
 }
 
+// DecisionMetrics records decision outcomes. A nil value disables it.
+type DecisionMetrics interface {
+	ObserveDecision(result string)
+}
+
 // DecisionHandler serves POST /v1/decisions. On a follower it forwards to the
 // leader; on the leader it authenticates, proposes a decision command, and waits
 // for the committed apply result.
@@ -38,12 +43,13 @@ type DecisionHandler struct {
 	peerURLs        map[string]string // node ID -> advertised base URL
 	proposalTimeout time.Duration
 	forwardClient   *http.Client
+	metrics         DecisionMetrics
 	now             func() int64 // leader-observed time in ms (injectable)
 	log             *slog.Logger
 }
 
-// NewDecisionHandler builds a decision handler.
-func NewDecisionHandler(node ProposerNode, authn *auth.APIKeyAuthenticator, selfID string, peerURLs map[string]string, proposalTimeout time.Duration, logger *slog.Logger) *DecisionHandler {
+// NewDecisionHandler builds a decision handler. metrics may be nil.
+func NewDecisionHandler(node ProposerNode, authn *auth.APIKeyAuthenticator, selfID string, peerURLs map[string]string, proposalTimeout time.Duration, metrics DecisionMetrics, logger *slog.Logger) *DecisionHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -57,8 +63,15 @@ func NewDecisionHandler(node ProposerNode, authn *auth.APIKeyAuthenticator, self
 		peerURLs:        peerURLs,
 		proposalTimeout: proposalTimeout,
 		forwardClient:   &http.Client{Timeout: forwardTimeout},
+		metrics:         metrics,
 		now:             func() int64 { return time.Now().UnixMilli() },
 		log:             logger.With(slog.String("component", "decision")),
+	}
+}
+
+func (h *DecisionHandler) observeDecision(result string) {
+	if h.metrics != nil {
+		h.metrics.ObserveDecision(result)
 	}
 }
 
@@ -193,14 +206,17 @@ func (h *DecisionHandler) writeResult(w http.ResponseWriter, result limiter.Resu
 		Duplicate: result.Duplicate,
 	}
 	if d.Allowed {
+		h.observeDecision("allowed")
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
+	h.observeDecision("denied")
 	w.Header().Set("Retry-After", strconv.Itoa(ceilSeconds(d.RetryAfterMS)))
 	writeJSON(w, http.StatusTooManyRequests, resp)
 }
 
 func (h *DecisionHandler) writeReject(w http.ResponseWriter, result limiter.Result, reqID string) {
+	h.observeDecision("rejected")
 	switch result.RejectCode {
 	case limiter.RejectValidation:
 		writeAPIError(w, http.StatusUnprocessableEntity, "validation_failed", result.RejectMsg, reqID)

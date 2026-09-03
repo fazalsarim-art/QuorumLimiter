@@ -55,6 +55,13 @@ type Transport interface {
 	SendAppendEntries(ctx context.Context, target string, req AppendEntriesRequest) (AppendEntriesResponse, error)
 }
 
+// Metrics receives operational events. A nil Metrics disables instrumentation.
+type Metrics interface {
+	IncElection()
+	IncRPC(rpc, result string)
+	ObserveProposalSeconds(seconds float64)
+}
+
 // ApplyFunc applies a committed entry to the state machine and returns its
 // result for any waiting proposer. Its contract is that it advances the store's
 // last_applied checkpoint atomically with the entry's effects, so a crash leaves
@@ -90,6 +97,7 @@ type Deps struct {
 	Transport Transport
 	Apply     ApplyFunc
 	Clock     Clock
+	Metrics   Metrics
 	Logger    *slog.Logger
 }
 
@@ -117,6 +125,7 @@ type Node struct {
 	transport Transport
 	apply     ApplyFunc
 	clock     Clock
+	metrics   Metrics
 	log       *slog.Logger
 
 	// timing
@@ -140,18 +149,20 @@ type Node struct {
 	done   chan struct{}
 
 	// --- mutable state, owned by the run loop ---
-	role         Role
-	currentTerm  uint64
-	votedFor     string
-	leaderID     string
-	commitIndex  uint64
-	lastApplied  uint64
-	lastLogIndex uint64
-	lastLogTerm  uint64
-	nextIndex    map[string]uint64
-	matchIndex   map[string]uint64
-	votesGranted int
-	waiters      map[uint64]*waiter
+	role                Role
+	currentTerm         uint64
+	votedFor            string
+	leaderID            string
+	commitIndex         uint64
+	lastApplied         uint64
+	lastLogIndex        uint64
+	lastLogTerm         uint64
+	nextIndex           map[string]uint64
+	matchIndex          map[string]uint64
+	votesGranted        int
+	waiters             map[uint64]*waiter
+	lastLeaderContactMS int64
+	peerContactMS       map[string]int64
 
 	// timer channels; nil disables the corresponding timer for the current role.
 	electionCh  <-chan time.Time
@@ -226,6 +237,7 @@ func newNode(cfg Config, deps Deps) (*Node, error) {
 		transport:         deps.Transport,
 		apply:             deps.Apply,
 		clock:             clock,
+		metrics:           deps.Metrics,
 		log:               logger.With(slog.String("component", "raft")),
 		electionMin:       electionMin,
 		electionMax:       electionMax,
@@ -240,6 +252,7 @@ func newNode(cfg Config, deps Deps) (*Node, error) {
 		proposeCh:         make(chan proposeEnvelope),
 		deregisterCh:      make(chan uint64),
 		waiters:           make(map[uint64]*waiter),
+		peerContactMS:     make(map[string]int64),
 		done:              make(chan struct{}),
 		role:              RoleFollower,
 	}
@@ -379,16 +392,18 @@ func (n *Node) Status() (Status, error) {
 
 func (n *Node) snapshotStatus() Status {
 	s := Status{
-		NodeID:       n.id,
-		Role:         n.role,
-		Term:         n.currentTerm,
-		LeaderID:     n.leaderID,
-		LastLogIndex: n.lastLogIndex,
-		LastLogTerm:  n.lastLogTerm,
-		CommitIndex:  n.commitIndex,
-		LastApplied:  n.lastApplied,
+		NodeID:              n.id,
+		Role:                n.role,
+		Term:                n.currentTerm,
+		LeaderID:            n.leaderID,
+		LastLogIndex:        n.lastLogIndex,
+		LastLogTerm:         n.lastLogTerm,
+		CommitIndex:         n.commitIndex,
+		LastApplied:         n.lastApplied,
+		LastLeaderContactMS: n.lastLeaderContactMS,
 	}
 	if n.role == RoleLeader {
+		s.LastQuorumContactMS = n.quorumContactMS()
 		for _, p := range n.peers {
 			s.Peers = append(s.Peers, PeerProgress{
 				NodeID:     p,
@@ -398,6 +413,28 @@ func (n *Node) snapshotStatus() Status {
 		}
 	}
 	return s
+}
+
+// quorumContactMS returns the time by which a quorum (this node plus at least one
+// follower) was last in contact — i.e. the most recent follower contact time.
+func (n *Node) quorumContactMS() int64 {
+	var best int64
+	for _, p := range n.peers {
+		if t := n.peerContactMS[p]; t > best {
+			best = t
+		}
+	}
+	return best
+}
+
+// nowMS returns the current time from the injectable clock (operational use
+// only, never in the deterministic apply path).
+func (n *Node) nowMS() int64 { return n.clock.Now().UnixMilli() }
+
+func (n *Node) incRPC(rpc, result string) {
+	if n.metrics != nil {
+		n.metrics.IncRPC(rpc, result)
+	}
 }
 
 // --- state transitions (run-loop only) ---
@@ -410,8 +447,12 @@ func (n *Node) becomeFollower(term uint64, leaderID string) error {
 		if err := n.store.SetTermAndVote(term, ""); err != nil {
 			return fmt.Errorf("raft: persist term %d: %w", term, err)
 		}
+		n.log.Info("term advanced", slog.Uint64("term", term))
 		n.currentTerm = term
 		n.votedFor = ""
+	}
+	if leaderID != "" && leaderID != n.leaderID {
+		n.log.Info("leader changed", slog.String("leader_id", leaderID), slog.Uint64("term", n.currentTerm))
 	}
 	wasLeader := n.role == RoleLeader
 	n.role = RoleFollower
@@ -451,6 +492,7 @@ func (n *Node) becomeLeader() {
 	n.leaderID = n.id
 	n.nextIndex = make(map[string]uint64, len(n.peers))
 	n.matchIndex = make(map[string]uint64, len(n.peers))
+	n.peerContactMS = make(map[string]int64, len(n.peers))
 	for _, p := range n.peers {
 		n.nextIndex[p] = n.lastLogIndex + 1
 		n.matchIndex[p] = 0

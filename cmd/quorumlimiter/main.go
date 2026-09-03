@@ -21,9 +21,12 @@ import (
 	"github.com/fazalsarim-art/QuorumLimiter/internal/config"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/dashboard"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/limiter"
+	"github.com/fazalsarim-art/QuorumLimiter/internal/metrics"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/raft"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/server"
 	"github.com/fazalsarim-art/QuorumLimiter/internal/storage"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -78,6 +81,11 @@ func run() int {
 		}
 	}
 
+	// Metrics registry (per-process, injectable elsewhere for tests).
+	metricsReg := prometheus.NewRegistry()
+	metricsReg.MustRegister(collectors.NewGoCollector())
+	m := metrics.New(metricsReg, cfg.NodeID)
+
 	// Consensus: state machine, HTTP transport, and the Raft node.
 	sm := limiter.New()
 	transport := api.NewHTTPTransport(peerURLs, cfg.ClusterToken, &http.Client{Timeout: 2 * time.Second})
@@ -91,7 +99,7 @@ func run() int {
 		ElectionTimeoutMin: cfg.ElectionTimeoutMin,
 		ElectionTimeoutMax: cfg.ElectionTimeoutMax,
 		HeartbeatInterval:  cfg.HeartbeatInterval,
-	}, raft.Deps{Store: store, Transport: transport, Apply: apply, Logger: logger})
+	}, raft.Deps{Store: store, Transport: transport, Apply: apply, Metrics: m, Logger: logger})
 	if err != nil {
 		logger.Error("failed to start raft node", slog.String("error", err.Error()))
 		return 1
@@ -100,11 +108,27 @@ func run() int {
 	defer node.Stop()
 	logger.Info("raft node started")
 
+	// Periodic metrics collection from consensus state and storage.
+	collectorCtx, stopCollector := context.WithCancel(context.Background())
+	defer stopCollector()
+	m.StartCollector(collectorCtx, func() (metrics.Snapshot, error) {
+		s, serr := node.Status()
+		if serr != nil {
+			return metrics.Snapshot{}, serr
+		}
+		return metrics.Snapshot{
+			Role: s.Role.String(), Term: s.Term, CommitIndex: s.CommitIndex,
+			LastApplied: s.LastApplied, LastLogIndex: s.LastLogIndex,
+			LastQuorumContactMS: s.LastQuorumContactMS,
+		}, nil
+	}, store.SizeBytes, 5*time.Second)
+
 	// HTTP handlers.
 	authn := auth.NewAPIKeyAuthenticator(cfg.APIKeyPepper, store)
 	sessions := auth.NewSessionManager(cfg.SessionKey, cfg.Production)
+	health := api.NewHealthHandler(node, cfg.NodeID, cfg.HeartbeatInterval)
 	internalRaft := api.NewInternalRaftHandler(node, cfg.ClusterToken, otherPeerIDs, logger)
-	decisions := api.NewDecisionHandler(node, authn, cfg.NodeID, peerURLs, cfg.ProposalTimeout, logger)
+	decisions := api.NewDecisionHandler(node, authn, cfg.NodeID, peerURLs, cfg.ProposalTimeout, m, logger)
 	adminAPI := api.NewAdminHandler(sessions, node, authn, store, logger)
 	dash, err := dashboard.New(sessions, cfg.AdminToken, node, authn, store, cfg.PublicBaseURL, cfg.ProposalTimeout, logger)
 	if err != nil {
@@ -112,12 +136,16 @@ func run() int {
 		return 1
 	}
 
-	srv := server.New(cfg, logger,
-		func(mux *http.ServeMux) { api.RegisterInternalRaft(mux, internalRaft) },
-		func(mux *http.ServeMux) { api.RegisterDecision(mux, decisions) },
-		func(mux *http.ServeMux) { api.RegisterAdmin(mux, adminAPI) },
-		func(mux *http.ServeMux) { dash.Register(mux) },
-	)
+	// Build the mux, then wrap it with request metrics.
+	mux := http.NewServeMux()
+	api.RegisterHealth(mux, health)
+	api.RegisterMetrics(mux, m.Handler())
+	api.RegisterInternalRaft(mux, internalRaft)
+	api.RegisterDecision(mux, decisions)
+	api.RegisterAdmin(mux, adminAPI)
+	dash.Register(mux)
+
+	srv := server.New(cfg, logger, m.Middleware(mux))
 
 	// Run the server; a fatal listen error is reported on errCh.
 	errCh := make(chan error, 1)
@@ -139,6 +167,7 @@ func run() int {
 	case <-ctx.Done():
 		stop() // restore default signal handling; a second signal now aborts
 		logger.Info("shutdown signal received, stopping")
+		health.SetDraining(true) // readiness fails fast while draining
 		if err := srv.Shutdown(context.Background()); err != nil {
 			logger.Error("graceful shutdown failed", slog.String("error", err.Error()))
 			return 1
