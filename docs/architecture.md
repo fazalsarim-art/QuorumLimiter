@@ -1,8 +1,65 @@
 # Architecture
 
-This document grows as the build progresses. It currently covers the storage
-layer (Phase 2). Consensus, the state machine, APIs, and the dashboard are
-documented as their phases land.
+QuorumLimiter is three identical Go nodes that order every state-changing
+decision through a from-scratch Raft-lite log, so a majority must commit a
+decision before it is applied and returned. This document covers the storage
+layer, the deterministic state machine, consensus, the public and admin APIs,
+the dashboard, observability, and deployment. See the
+[architecture decision records](adr/) for the rationale behind the biggest
+choices.
+
+## System overview
+
+```mermaid
+flowchart TD
+  C["API clients"] -->|"HTTPS /v1/decisions"| GW["Caddy gateway<br/>only public port;<br/>blocks /internal/* and /metrics"]
+  GW --> N1 & N2 & N3
+  subgraph CL["Raft-lite cluster — fixed 3 nodes"]
+    N1["node1"]
+    N2["node2"]
+    N3["node3"]
+    N1 <-->|"AppendEntries / RequestVote<br/>(cluster token, private net)"| N2
+    N2 <--> N3
+    N1 <--> N3
+  end
+  N1 --- B1[("bbolt")]
+  N2 --- B2[("bbolt")]
+  N3 --- B3[("bbolt")]
+  PR["Prometheus<br/>(loopback only)"] -. "scrape /metrics" .-> N1
+  PR -. scrape .-> N2
+  PR -. scrape .-> N3
+```
+
+Any node accepts a decision request; a follower forwards it to the current
+leader over the private network. Only the leader proposes to the log.
+
+## Request flow (a decision)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Cl as Client
+  participant GW as Caddy
+  participant F as Follower
+  participant L as Leader
+  participant Q as Quorum peer
+  Cl->>GW: POST /v1/decisions (API key, Idempotency-Key)
+  GW->>F: round-robin to a node
+  F->>L: forward, X-QL-Forwarded (loop guard)
+  Note over L: authenticate (constant-time HMAC),<br/>validate, idempotency lookup
+  L->>L: append decision to durable log
+  L->>Q: AppendEntries
+  Q-->>L: ack
+  Note over L: committed on majority<br/>(current-term rule)
+  L->>L: apply in order (integer token bucket)
+  L-->>F: applied result
+  F-->>GW: 200 allowed / 429 denied (+Retry-After)
+  GW-->>Cl: response (X-Request-ID)
+```
+
+If there is no leader or quorum the node returns `503` + `Retry-After`; a commit
+that outlives the caller's timeout returns `504`, and the client retries with the
+same `Idempotency-Key` to recover the original result.
 
 ## Storage (`internal/storage`)
 
