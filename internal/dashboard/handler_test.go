@@ -72,7 +72,7 @@ func login(t *testing.T, srv *httptest.Server) (*http.Client, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want 303", resp.StatusCode)
 	}
@@ -97,7 +97,7 @@ func TestDashboardUnauthRedirectsToLogin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusFound || !strings.HasSuffix(resp.Header.Get("Location"), "/admin/login") {
 			t.Errorf("%s: status=%d loc=%q, want 302 -> /admin/login", path, resp.StatusCode, resp.Header.Get("Location"))
 		}
@@ -111,7 +111,7 @@ func TestDashboardLoginWrongToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("wrong token status = %d, want 401", resp.StatusCode)
 	}
@@ -128,7 +128,7 @@ func TestDashboardPolicyPageEscapesAndHasCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
 	if strings.Contains(html, "<script>x</script>") {
@@ -162,7 +162,7 @@ func TestDashboardCreatePolicyForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create policy status = %d, want 303", resp.StatusCode)
 	}
@@ -184,7 +184,7 @@ func TestDashboardFormRequiresCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("missing CSRF status = %d, want 403", resp.StatusCode)
 	}
@@ -206,7 +206,7 @@ func TestDashboardCreateClientShowsKeyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create client status = %d, want 201", resp.StatusCode)
 	}
@@ -231,7 +231,7 @@ func TestDashboardStaticServed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("static css status = %d, want 200", resp.StatusCode)
 	}

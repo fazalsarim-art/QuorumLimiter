@@ -77,7 +77,7 @@ func TestInternalRequestVoteSuccess(t *testing.T) {
 	s := testServer(t, node, []string{"node1"})
 
 	resp := postVote(t, s.URL, testToken, "application/json", voteBody(t, "node1"))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -113,7 +113,7 @@ func TestInternalAuthAndValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := postVote(t, s.URL, tc.token, tc.contentType, tc.body)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != tc.want {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
 			}
@@ -128,7 +128,7 @@ func TestInternalBodyTooLarge(t *testing.T) {
 	huge := append([]byte(`{"candidate_id":"`), bytes.Repeat([]byte("a"), 70<<10)...)
 	huge = append(huge, []byte(`"}`)...)
 	resp := postVote(t, s.URL, testToken, "application/json", huge)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", resp.StatusCode)
 	}
@@ -144,7 +144,7 @@ func TestInternalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

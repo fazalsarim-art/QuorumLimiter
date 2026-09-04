@@ -92,8 +92,8 @@ func (n *Node) handleAppendResponse(ar appendResult) {
 // backward efficiently.
 func (n *Node) backupNextIndex(peer string, resp AppendEntriesResponse) {
 	var next uint64
-	switch {
-	case resp.ConflictTerm == 0:
+	switch resp.ConflictTerm {
+	case 0:
 		// Follower's log was too short (or empty at prevLogIndex).
 		next = resp.ConflictIndex
 	default:

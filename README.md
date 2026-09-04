@@ -38,9 +38,20 @@ The gateway is the only public port (`8080`). Node debug ports and Prometheus
 gateway. The admin dashboard is at `http://localhost:8080/admin`. See
 `docs/api.md` for the decision API and `docs/architecture.md` for the design.
 
+## Development
+
+```bash
+make release-check   # fmt-check, vet, test, race, lint, vuln, secret-scan — one gate, nothing suppressed
+make load BASE_URL=http://localhost:8080 API_KEY=qlk_... POLICY_ID=load   # k6 load test
+```
+
+`make help` lists all targets. Performance results and the load/failover
+methodology are in [`docs/demo.md`](docs/demo.md); the security posture and gate
+details are in [`docs/security.md`](docs/security.md).
+
 ## Planned stack
 
-Go 1.26.5 · bbolt · Prometheus 3.13.1 · Docker + Compose · Caddy 2.11.4
+Go 1.26.6 · bbolt · Prometheus 3.13.1 · Docker + Compose · Caddy 2.11.4
 
 > **Note:** this is an educational Raft implementation with fixed three-node membership. It
 > demonstrates consensus mechanics and failure handling; it is not a substitute for a

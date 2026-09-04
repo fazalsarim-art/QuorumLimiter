@@ -38,7 +38,7 @@ func TestTermAndVoteReopenRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer st2.Close()
+	defer func() { _ = st2.Close() }()
 
 	if term, _ := st2.CurrentTerm(); term != 7 {
 		t.Errorf("term = %d, want 7", term)

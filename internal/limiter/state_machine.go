@@ -323,7 +323,7 @@ func (sm *StateMachine) applyCreateClient(tx *storage.StateTx, ctx ApplyContext,
 		return reject(CmdCreateClient, RejectKeyPrefixConflict, "key prefix already in use")
 	}
 	// Referenced policies must exist unless the client is granted all ("*").
-	if !(len(p.AllowedPolicyIDs) == 1 && p.AllowedPolicyIDs[0] == "*") {
+	if len(p.AllowedPolicyIDs) != 1 || p.AllowedPolicyIDs[0] != "*" {
 		for _, id := range p.AllowedPolicyIDs {
 			if _, ok := tx.GetPolicy(id); !ok {
 				return reject(CmdCreateClient, RejectPolicyNotFound, "allowed policy "+id+" does not exist")

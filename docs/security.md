@@ -57,6 +57,29 @@ shared bearer token on a private network; mutual TLS is future work.
   store subjects only as a short one-way hash.
 - Metrics never use API keys, subjects, or client IDs as labels (Phase 10).
 
+## Automated quality and security gates
+
+`make release-check` runs the full gate in a fixed order and suppresses nothing:
+
+| Step | Tool | What it catches |
+|------|------|-----------------|
+| `fmt-check` | `gofmt -l` | unformatted code |
+| `vet` | `go vet` | suspicious constructs |
+| `test` | `go test ./...` | functional regressions |
+| `race` | `go test -race ./...` | data races |
+| `lint` | `golangci-lint` (`.golangci.yml`) | errcheck, staticcheck, revive, misspell, unconvert, … |
+| `vuln` | `govulncheck` | known CVEs in the std-lib and dependencies |
+| `secret-scan` | `scripts/secret-scan.sh` | leaked credentials in tracked files |
+
+`scripts/secret-scan.sh` greps only git-tracked files for private keys, cloud and
+vendor tokens (AWS, GitHub, Slack, Google) and raw `qlk_` API keys, and fails the
+build if `deploy/.env` is ever tracked. Findings are fixed, never allow-listed.
+
+**Vulnerability remediation.** `govulncheck` flagged six Go standard-library
+advisories fixed in **Go 1.26.6** (including `html/template` and `net/http`);
+Phase 13 bumped the `toolchain` directive in `go.mod` from 1.26.5 to 1.26.6 and
+the scan is now clean.
+
 ## Limitations
 
 Fixed three-node membership; a shared bearer token (not mTLS) between nodes;

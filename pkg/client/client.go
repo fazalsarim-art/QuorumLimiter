@@ -132,7 +132,7 @@ func (c *Client) do(ctx context.Context, body []byte, idempotencyKey string) (*h
 }
 
 func (c *Client) parse(resp *http.Response) (*DecideResponse, error) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusTooManyRequests:
@@ -148,7 +148,7 @@ func (c *Client) parse(resp *http.Response) (*DecideResponse, error) {
 }
 
 func decodeAPIError(resp *http.Response) error {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return apiErrorFromBody(resp.StatusCode, data)
 }

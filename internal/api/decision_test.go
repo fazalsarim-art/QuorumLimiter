@@ -125,7 +125,7 @@ func TestDecisionAllowed(t *testing.T) {
 	s := decisionServer(t, node, testAuthenticator(t, []string{"*"}, true), nil)
 
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -150,7 +150,7 @@ func TestDecisionDenied(t *testing.T) {
 	s := decisionServer(t, node, testAuthenticator(t, []string{"*"}, true), nil)
 
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", resp.StatusCode)
 	}
@@ -175,7 +175,7 @@ func TestDecisionRejectMappings(t *testing.T) {
 			node := &fakeProposer{status: leaderStatus(), result: tc.res}
 			s := decisionServer(t, node, testAuthenticator(t, []string{"*"}, true), nil)
 			resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != tc.want {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
 			}
@@ -204,7 +204,7 @@ func TestDecisionInputErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := postDecision(t, s.URL, tc.o)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != tc.want {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
 			}
@@ -217,7 +217,7 @@ func TestDecisionForbiddenPolicy(t *testing.T) {
 	// client allowed only "other", not "pol"
 	s := decisionServer(t, node, testAuthenticator(t, []string{"other"}, true), nil)
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
 	}
@@ -230,7 +230,7 @@ func TestDecisionProposalTimeout(t *testing.T) {
 	node := &fakeProposer{status: leaderStatus(), err: raft.ErrProposalTimeout}
 	s := decisionServer(t, node, testAuthenticator(t, []string{"*"}, true), nil)
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusGatewayTimeout {
 		t.Errorf("status = %d, want 504", resp.StatusCode)
 	}
@@ -240,7 +240,7 @@ func TestDecisionNoLeader(t *testing.T) {
 	node := &fakeProposer{status: raft.Status{NodeID: "node1", Role: raft.RoleFollower, LeaderID: ""}}
 	s := decisionServer(t, node, testAuthenticator(t, []string{"*"}, true), nil)
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", resp.StatusCode)
 	}
@@ -264,7 +264,7 @@ func TestDecisionForwardsToLeader(t *testing.T) {
 	followerSrv := decisionServer(t, followerNode, testAuthenticator(t, []string{"*"}, true), map[string]string{"node2": leaderSrv.URL})
 
 	resp := postDecision(t, followerSrv.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("forwarded status = %d, want 200", resp.StatusCode)
 	}
@@ -287,7 +287,7 @@ func TestDecisionForwardLoopPrevented(t *testing.T) {
 
 	// An already-forwarded request on a non-leader must not forward again.
 	resp := postDecision(t, s.URL, decideOpts{key: testAPIKey, idem: testIdem, contentType: "application/json", forwarded: true, body: validBody()})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503 (loop prevented)", resp.StatusCode)
 	}

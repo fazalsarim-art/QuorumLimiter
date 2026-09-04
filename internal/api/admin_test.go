@@ -80,7 +80,7 @@ func adminReq(t *testing.T, method, url string, cookie *http.Cookie, csrf, origi
 func TestAdminJSONRequiresSession(t *testing.T) {
 	srv, _ := adminServer(t, &fakeProposer{}, nil)
 	resp := adminReq(t, http.MethodGet, srv.URL+"/api/admin/policies", nil, "", "", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("no session status = %d, want 401", resp.StatusCode)
 	}
@@ -96,14 +96,14 @@ func TestAdminMutationRequiresCSRFAndOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("missing CSRF status = %d, want 403", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// CSRF but wrong origin -> 403.
 	resp = adminReq(t, http.MethodPost, srv.URL+"/api/admin/policies", cookie, csrf, "https://evil.example.com", body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("bad origin status = %d, want 403", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Session + CSRF + same origin -> 201.
 	resp = adminReq(t, http.MethodPost, srv.URL+"/api/admin/policies", cookie, csrf, srv.URL, body)
@@ -113,7 +113,7 @@ func TestAdminMutationRequiresCSRFAndOrigin(t *testing.T) {
 	if resp.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("missing no-store header")
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestAdminCreatePolicyDuplicate(t *testing.T) {
@@ -122,7 +122,7 @@ func TestAdminCreatePolicyDuplicate(t *testing.T) {
 	cookie, csrf := session(t, sm)
 	body := []byte(`{"id":"pol","name":"Policy","capacity_tokens":5,"refill_tokens":1,"refill_interval_ms":12000,"max_cost_tokens":1,"active":true}`)
 	resp := adminReq(t, http.MethodPost, srv.URL+"/api/admin/policies", cookie, csrf, srv.URL, body)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("duplicate status = %d, want 409", resp.StatusCode)
 	}
@@ -134,7 +134,7 @@ func TestAdminUpdatePolicyVersionConflict(t *testing.T) {
 	cookie, csrf := session(t, sm)
 	body := []byte(`{"name":"P","capacity_tokens":5,"refill_tokens":1,"refill_interval_ms":12000,"max_cost_tokens":1,"expected_version":1}`)
 	resp := adminReq(t, http.MethodPut, srv.URL+"/api/admin/policies/pol", cookie, csrf, srv.URL, body)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("version conflict status = %d, want 409", resp.StatusCode)
 	}
@@ -148,7 +148,7 @@ func TestAdminCreateClientReturnsRawKeyOnce(t *testing.T) {
 	cookie, csrf := session(t, sm)
 
 	resp := adminReq(t, http.MethodPost, srv.URL+"/api/admin/clients", cookie, csrf, srv.URL, []byte(`{"name":"svc","allowed_policy_ids":["*"]}`))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
@@ -174,7 +174,7 @@ func TestAdminRevokeClientAlreadyRevoked(t *testing.T) {
 	cookie, csrf := session(t, sm)
 
 	resp := adminReq(t, http.MethodPost, srv.URL+"/api/admin/clients/cli_x/revoke", cookie, csrf, srv.URL, []byte(`{"confirm":true}`))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -194,7 +194,7 @@ func TestAdminListPolicies(t *testing.T) {
 	cookie, _ := session(t, sm)
 
 	resp := adminReq(t, http.MethodGet, srv.URL+"/api/admin/policies", cookie, "", "", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list status = %d, want 200", resp.StatusCode)
 	}
