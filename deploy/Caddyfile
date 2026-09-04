@@ -18,6 +18,9 @@
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
+		# HSTS is honored by browsers only over HTTPS, so it is inert for the
+		# local :8080 HTTP setup and active once QL_SITE_ADDRESS is a domain.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		-Server
 	}
 }

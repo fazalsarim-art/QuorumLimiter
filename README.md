@@ -38,6 +38,14 @@ The gateway is the only public port (`8080`). Node debug ports and Prometheus
 gateway. The admin dashboard is at `http://localhost:8080/admin`. See
 `docs/api.md` for the decision API and `docs/architecture.md` for the design.
 
+## Production deployment
+
+`deploy/compose.prod.yml` runs a pinned, pre-built image behind Caddy with
+automatic HTTPS on your domain, persistent volumes, a firewall, and backups. The
+full runbook — first deploy, verification, backup/restore, image upgrade,
+rollback, the single-host limitation, and a three-VM variant — is in
+[`docs/deployment.md`](docs/deployment.md). Membership is fixed at three nodes.
+
 ## Development
 
 ```bash

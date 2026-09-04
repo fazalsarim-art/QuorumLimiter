@@ -80,6 +80,24 @@ advisories fixed in **Go 1.26.6** (including `html/template` and `net/http`);
 Phase 13 bumped the `toolchain` directive in `go.mod` from 1.26.5 to 1.26.6 and
 the scan is now clean.
 
+## Production deployment
+
+The production Compose file (`deploy/compose.prod.yml`) and
+[deployment runbook](deployment.md) harden the exposed surface:
+
+- `QL_PRODUCTION=true` makes session/CSRF cookies `Secure` and sets an HTTPS
+  public base URL; Caddy terminates TLS and is the only trusted proxy.
+- **Caddy is the sole public service**, on 80/443, with automatic HTTPS and an
+  added `Strict-Transport-Security` header. Node debug ports are not published,
+  and Prometheus binds to loopback (reachable only via SSH tunnel).
+- `/internal/*` and `/metrics` return `404` at the gateway, so consensus RPCs and
+  metrics are never publicly reachable.
+- The host firewall (`ufw`) allows only 22/80/443; the three-VM variant allows
+  the Raft port only between the private peer addresses.
+- Production secrets are generated fresh on the server, kept in a git-ignored
+  `deploy/.env` (mode `600`), and passed only as environment references. Backups
+  are encrypted with a key stored off-host.
+
 ## Limitations
 
 Fixed three-node membership; a shared bearer token (not mTLS) between nodes;

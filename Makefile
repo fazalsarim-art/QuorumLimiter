@@ -6,10 +6,12 @@ GO ?= go
 PKG := ./...
 BINARY := quorumlimiter
 COMPOSE := docker compose -f deploy/compose.dev.yml --env-file deploy/.env
+COMPOSE_PROD := docker compose -f deploy/compose.prod.yml --env-file deploy/.env
 
 .PHONY: fmt fmt-check vet test race lint vuln secret-scan release-check \
 	run build tidy help \
 	docker-build compose-up compose-down compose-logs compose-ps \
+	prod-config prod-pull prod-up prod-down prod-logs prod-ps \
 	integration smoke failover load
 
 help:
@@ -17,6 +19,7 @@ help:
 	@echo "Gate:    release-check  (fmt-check vet test race lint vuln secret-scan)"
 	@echo "Build:   run build"
 	@echo "Docker:  docker-build compose-up compose-down compose-logs compose-ps"
+	@echo "Prod:    prod-config prod-pull prod-up prod-down prod-logs prod-ps  (see docs/deployment.md)"
 	@echo "Ops:     smoke failover load  (require a running cluster + deploy/.env)"
 
 fmt:
@@ -81,6 +84,27 @@ compose-logs:
 
 compose-ps:
 	$(COMPOSE) ps
+
+# Production targets. Require deploy/.env on the server with production secrets
+# plus QL_IMAGE and QL_DOMAIN (see docs/deployment.md). These never build; they
+# run a pre-built, tagged image.
+prod-config:
+	$(COMPOSE_PROD) config
+
+prod-pull:
+	$(COMPOSE_PROD) pull
+
+prod-up:
+	$(COMPOSE_PROD) up -d
+
+prod-down:
+	$(COMPOSE_PROD) down
+
+prod-logs:
+	$(COMPOSE_PROD) logs -f --tail=100
+
+prod-ps:
+	$(COMPOSE_PROD) ps
 
 integration:
 	$(GO) test ./test/integration -count=1 -timeout=120s

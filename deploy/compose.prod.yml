@@ -1,0 +1,131 @@
+# Production three-node QuorumLimiter deployment for a single Ubuntu host.
+#
+# Differences from compose.dev.yml:
+#   * runs a pre-built, explicitly tagged image (QL_IMAGE) instead of building;
+#   * Caddy is the ONLY public service, on 80/443, serving your real domain over
+#     automatic HTTPS; node debug ports are NOT published; Prometheus binds to
+#     loopback only;
+#   * QL_PRODUCTION=true (Secure cookies, HTTPS public base URL);
+#   * larger stop grace period and memory headroom.
+#
+# All secrets and host-specific values are ENVIRONMENT REFERENCES — never inline
+# values. Provide them in a git-ignored deploy/.env on the server (see
+# docs/deployment.md for the template and generation commands). Never reuse
+# development secrets in production.
+#
+# Validate before deploying:  docker compose -f deploy/compose.prod.yml config
+name: quorumlimiter
+
+x-node-base: &node-base
+  image: ${QL_IMAGE:?set QL_IMAGE to the built, tagged image ref (e.g. ghcr.io/you/quorumlimiter:1.0.0)}
+  restart: unless-stopped
+  networks: [ql]
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/live"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+    start_period: 5s
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
+
+x-node-env: &node-env
+  QL_CLUSTER_ID: quorumlimiter-prod
+  QL_PEERS: node1=http://node1:8080,node2=http://node2:8080,node3=http://node3:8080
+  QL_BIND_ADDR: ":8080"
+  QL_DATA_PATH: /data/quorumlimiter.db
+  QL_ELECTION_TIMEOUT_MIN: 800ms
+  QL_ELECTION_TIMEOUT_MAX: 1400ms
+  QL_HEARTBEAT_INTERVAL: 200ms
+  QL_PROPOSAL_TIMEOUT: 3s
+  # Production: HTTPS public URL and Secure cookies. Caddy terminates TLS and is
+  # the only trusted proxy; the app must advertise the HTTPS origin so redirects
+  # and cookies are correct.
+  QL_PRODUCTION: "true"
+  QL_PUBLIC_BASE_URL: https://${QL_DOMAIN:?set QL_DOMAIN to your public domain, e.g. limiter.example.com}
+  QL_LOG_LEVEL: info
+  QL_CLUSTER_TOKEN: ${QL_CLUSTER_TOKEN:?set QL_CLUSTER_TOKEN in deploy/.env}
+  QL_ADMIN_TOKEN: ${QL_ADMIN_TOKEN:?set QL_ADMIN_TOKEN in deploy/.env}
+  QL_SESSION_KEY: ${QL_SESSION_KEY:?set QL_SESSION_KEY in deploy/.env}
+  QL_API_KEY_PEPPER: ${QL_API_KEY_PEPPER:?set QL_API_KEY_PEPPER in deploy/.env}
+
+services:
+  node1:
+    <<: *node-base
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node1
+      QL_ADVERTISE_URL: http://node1:8080
+    volumes:
+      - node1_data:/data
+    # No published ports: reachable only on the private Compose network.
+
+  node2:
+    <<: *node-base
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node2
+      QL_ADVERTISE_URL: http://node2:8080
+    volumes:
+      - node2_data:/data
+
+  node3:
+    <<: *node-base
+    environment:
+      <<: *node-env
+      QL_NODE_ID: node3
+      QL_ADVERTISE_URL: http://node3:8080
+    volumes:
+      - node3_data:/data
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    networks: [ql]
+    depends_on: [node1, node2, node3]
+    ports:
+      - "80:80"     # ACME HTTP-01 challenge + HTTP->HTTPS redirect
+      - "443:443"   # public HTTPS
+      - "443:443/udp" # HTTP/3 (QUIC); same firewall port as 443
+    environment:
+      # Setting the site address to your domain switches Caddy from local :8080
+      # HTTP to automatic HTTPS for that domain (see deploy/Caddyfile).
+      QL_SITE_ADDRESS: ${QL_DOMAIN:?set QL_DOMAIN to your public domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data     # issued certificates — MUST persist across upgrades
+      - caddy_config:/config
+    stop_grace_period: 30s
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    restart: unless-stopped
+    networks: [ql]
+    depends_on: [node1, node2, node3]
+    ports:
+      - "127.0.0.1:9090:9090" # loopback only; reach via SSH tunnel, never public
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom_data:/prometheus
+
+networks:
+  ql: {}
+
+volumes:
+  node1_data: {}
+  node2_data: {}
+  node3_data: {}
+  caddy_data: {}
+  caddy_config: {}
+  prom_data: {}
