@@ -21,11 +21,13 @@ type rpcTarget interface {
 var ErrPartitioned = errors.New("testcluster: link partitioned")
 
 // FaultTransport routes RPCs between in-process nodes and can block directed
-// links to simulate (possibly asymmetric) network partitions.
+// links (to simulate possibly-asymmetric partitions) or duplicate AppendEntries
+// deliveries (to verify idempotent handling).
 type FaultTransport struct {
-	mu      sync.Mutex
-	nodes   map[string]rpcTarget
-	blocked map[string]map[string]bool // blocked[from][to]
+	mu        sync.Mutex
+	nodes     map[string]rpcTarget
+	blocked   map[string]map[string]bool // blocked[from][to]
+	duplicate bool
 }
 
 // NewFaultTransport creates an empty transport.
@@ -34,6 +36,14 @@ func NewFaultTransport() *FaultTransport {
 		nodes:   make(map[string]rpcTarget),
 		blocked: make(map[string]map[string]bool),
 	}
+}
+
+// SetDuplicate makes every AppendEntries deliver twice, exercising the
+// follower's idempotent handling of repeated RPCs.
+func (ft *FaultTransport) SetDuplicate(v bool) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	ft.duplicate = v
 }
 
 func (ft *FaultTransport) register(id string, node rpcTarget) {
@@ -85,6 +95,14 @@ func (ft *FaultTransport) SendAppendEntries(ctx context.Context, target string, 
 	n, ok := ft.lookup(req.SourceNodeID, target)
 	if !ok {
 		return raft.AppendEntriesResponse{}, ErrPartitioned
+	}
+	ft.mu.Lock()
+	dup := ft.duplicate
+	ft.mu.Unlock()
+	if dup {
+		// Deliver once and discard the first result; the retried delivery must
+		// be handled idempotently by the follower.
+		_, _ = n.HandleAppendEntries(ctx, req)
 	}
 	return n.HandleAppendEntries(ctx, req)
 }

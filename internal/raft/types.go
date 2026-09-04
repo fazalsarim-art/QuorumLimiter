@@ -1,6 +1,10 @@
 package raft
 
-import "github.com/fazalsarim-art/QuorumLimiter/internal/storage"
+import (
+	"fmt"
+
+	"github.com/fazalsarim-art/QuorumLimiter/internal/storage"
+)
 
 // ProtocolVersion is the wire protocol version for internal RPCs. A mismatch is
 // rejected so incompatible binaries cannot corrupt the log.
@@ -26,6 +30,27 @@ func (r Role) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// MarshalJSON renders the role as a readable string (e.g. "leader") in status
+// responses rather than a numeric code.
+func (r Role) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + r.String() + `"`), nil
+}
+
+// UnmarshalJSON parses the string form back into a Role.
+func (r *Role) UnmarshalJSON(b []byte) error {
+	switch string(b) {
+	case `"follower"`:
+		*r = RoleFollower
+	case `"candidate"`:
+		*r = RoleCandidate
+	case `"leader"`:
+		*r = RoleLeader
+	default:
+		return fmt.Errorf("raft: unknown role %s", b)
+	}
+	return nil
 }
 
 // LogEntry is the persisted log entry type, owned by the storage layer. Raft

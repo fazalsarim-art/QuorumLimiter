@@ -4,11 +4,13 @@ BINARY := quorumlimiter
 COMPOSE := docker compose -f deploy/compose.dev.yml --env-file deploy/.env
 
 .PHONY: fmt test race lint vuln run build tidy help \
-	docker-build compose-up compose-down compose-logs compose-ps
+	docker-build compose-up compose-down compose-logs compose-ps \
+	integration smoke failover
 
 help:
-	@echo "Dev:    fmt test race lint vuln run build tidy"
+	@echo "Dev:    fmt test race lint vuln run build tidy integration"
 	@echo "Docker: docker-build compose-up compose-down compose-logs compose-ps"
+	@echo "Ops:    smoke failover  (require a running cluster + deploy/.env)"
 
 fmt:
 	$(GO) fmt $(PKG)
@@ -49,3 +51,12 @@ compose-logs:
 
 compose-ps:
 	$(COMPOSE) ps
+
+integration:
+	$(GO) test ./test/integration -count=1 -timeout=120s
+
+smoke:
+	bash scripts/smoke.sh
+
+failover:
+	bash scripts/failover.sh

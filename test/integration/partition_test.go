@@ -34,6 +34,38 @@ func TestPartitionedFollowerCatchesUpAfterHeal(t *testing.T) {
 	c.WaitAppConverged(6*time.Second, "node1", "node2", "node3")
 }
 
+// TestAsymmetricPartitionStillCommits cuts a single direction between two nodes.
+// A quorum is still reachable through the remaining links, so commits proceed;
+// after healing, all nodes converge.
+func TestAsymmetricPartitionStillCommits(t *testing.T) {
+	c := testcluster.New(t, 3)
+	c.WaitLeader(3 * time.Second)
+	seedPolicyAndClient(t, c)
+
+	// One-directional cut: node2 -> node3 messages are dropped (node3 -> node2
+	// still flows). The cluster retains a quorum on other links.
+	c.Transport().Block("node2", "node3")
+	for i := 0; i < 6; i++ {
+		mustPropose(t, c, decideCmd("cli", "pol", "s", 1, fmt.Sprintf("req-asym-%08d", i), int64(2000+i)))
+	}
+	c.Heal()
+	c.WaitAppConverged(6*time.Second, "node1", "node2", "node3")
+}
+
+// TestDuplicateRPCsAreIdempotent runs with every AppendEntries delivered twice;
+// the cluster must still converge with no doubled effects.
+func TestDuplicateRPCsAreIdempotent(t *testing.T) {
+	c := testcluster.New(t, 3)
+	c.Transport().SetDuplicate(true)
+	c.WaitLeader(3 * time.Second)
+	seedPolicyAndClient(t, c)
+
+	for i := 0; i < 20; i++ {
+		mustPropose(t, c, decideCmd("cli", "pol", "dup", 1, fmt.Sprintf("req-dup-%08d", i), 2000))
+	}
+	c.WaitAppConverged(5*time.Second, "node1", "node2", "node3")
+}
+
 // TestOldLeaderConflictRepaired forces a conflicting suffix: an isolated old
 // leader appends uncommitted entries, a new leader commits different entries at
 // the same indexes, and on heal the old leader's conflicting suffix is repaired.
