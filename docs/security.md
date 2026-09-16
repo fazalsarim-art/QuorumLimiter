@@ -45,7 +45,7 @@ immediate client-creation response.
 `/internal/raft/*` requires the cluster bearer token (constant-time), a
 source-node allowlist, JSON content-type, a 64 KiB body cap, and strict
 decoding. These routes must never be exposed through the public gateway (the
-Caddy config blocks them, Phase 11). Node-to-node authorization today is a
+Caddy config blocks them). Node-to-node authorization today is a
 shared bearer token on a private network; mutual TLS is future work.
 
 ## Request hardening
@@ -55,7 +55,7 @@ shared bearer token on a private network; mutual TLS is future work.
 - Server read-header/read/write/idle timeouts bound slow clients.
 - Redacted logs: no secrets, tokens, cookies, or full subjects. Audit records
   store subjects only as a short one-way hash.
-- Metrics never use API keys, subjects, or client IDs as labels (Phase 10).
+- Metrics never use API keys, subjects, or client IDs as labels.
 
 ## Automated quality and security gates
 
@@ -76,9 +76,8 @@ vendor tokens (AWS, GitHub, Slack, Google) and raw `qlk_` API keys, and fails th
 build if `deploy/.env` is ever tracked. Findings are fixed, never allow-listed.
 
 **Vulnerability remediation.** `govulncheck` flagged six Go standard-library
-advisories fixed in **Go 1.26.6** (including `html/template` and `net/http`);
-Phase 13 bumped the `toolchain` directive in `go.mod` from 1.26.5 to 1.26.6 and
-the scan is now clean.
+advisories fixed in **Go 1.26.6** (including `html/template` and `net/http`); the
+`toolchain` directive in `go.mod` is pinned to 1.26.6 and the scan is now clean.
 
 ## Production deployment
 

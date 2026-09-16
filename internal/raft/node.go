@@ -48,7 +48,7 @@ type Store interface {
 	SetClusterID(id string) error
 }
 
-// Transport sends RPCs to peers. Used from Phase 5 onward; the node never calls
+// Transport sends RPCs to peers; the node never calls
 // it while holding a store transaction.
 type Transport interface {
 	SendRequestVote(ctx context.Context, target string, req RequestVoteRequest) (RequestVoteResponse, error)
@@ -469,7 +469,7 @@ func (n *Node) becomeFollower(term uint64, leaderID string) error {
 
 // becomeCandidate begins a new election term, voting for self. It persists both
 // the incremented term and the self-vote before the caller sends RequestVote
-// (the sending side is implemented in Phase 5).
+// (the sending side lives in election.go).
 func (n *Node) becomeCandidate() error {
 	newTerm := n.currentTerm + 1
 	if err := n.store.SetTermAndVote(newTerm, n.id); err != nil {

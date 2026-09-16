@@ -13,8 +13,7 @@ import (
 
 // --- test doubles ---
 
-// fakeClock is an injectable clock for deterministic timing tests (used more in
-// Phase 5); Phase 4 only needs to show the clock is injectable.
+// fakeClock is an injectable clock for deterministic timing tests.
 type fakeClock struct {
 	mu  sync.Mutex
 	now time.Time

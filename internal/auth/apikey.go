@@ -83,7 +83,7 @@ func (a *APIKeyAuthenticator) Authenticate(rawKey string) (limiter.Client, error
 }
 
 // Digest computes the HMAC-SHA256 of a raw key with the pepper. It is also used
-// when creating clients (Phase 8) to derive the stored digest.
+// when creating clients to derive the stored digest.
 func (a *APIKeyAuthenticator) Digest(rawKey string) []byte {
 	m := hmac.New(sha256.New, a.pepper)
 	m.Write([]byte(rawKey))

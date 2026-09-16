@@ -1,7 +1,7 @@
 # API
 
 Public JSON APIs live under `/v1`. The private Raft endpoints under
-`/internal/raft` (Phase 5) are cluster-only and must never be exposed publicly.
+`/internal/raft` are cluster-only and must never be exposed publicly.
 
 ## Conventions
 

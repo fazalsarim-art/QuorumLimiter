@@ -79,7 +79,7 @@ Only two components may write, which is enforced by the package API:
    the callback a `StateTx` (`state_store.go`).
 
 HTTP handlers never write application buckets directly. They propose commands
-and wait for the committed apply result (Phases 6–7).
+and wait for the committed apply result.
 
 ### Buckets (schema version 1)
 
@@ -95,7 +95,7 @@ and wait for the committed apply result (Phases 6–7).
 | `audit`         | 8-byte big-endian log index           | encoded AuditEvent        | state machine   |
 
 Application values are opaque encoded bytes to storage; their concrete models
-and JSON encoding live in `internal/limiter` (Phase 3), so storage never imports
+and JSON encoding live in `internal/limiter`, so storage never imports
 application types.
 
 ### Encoding (`encoding.go`)
@@ -123,7 +123,7 @@ up-to-date database makes no changes (idempotent). Startup **refuses** to
 proceed if the stored version is newer than the binary supports
 (`ErrSchemaTooNew`), rather than risk misinterpreting data.
 
-### Atomic apply (Phases 3–6)
+### Atomic apply
 
 When a committed command is applied, its application writes **and** the new
 `last_applied` checkpoint commit in the same `StateTx`. A crash therefore leaves
@@ -196,10 +196,9 @@ deterministically, using the command timestamp, never a local clock.
 
 ## Consensus (`internal/raft`)
 
-The Raft-lite node is built up over Phases 4–6. Phase 4 establishes the
-foundation: message types, the concurrency model, persistent term/vote
-transitions, recovery, and status. Elections (Phase 5) and log replication /
-commit / apply (Phase 6) build on it.
+The Raft-lite node's foundation is message types, the concurrency model,
+persistent term/vote transitions, recovery, and status, with leader election and
+log replication / commit / apply built on top.
 
 ### Concurrency model
 
@@ -223,8 +222,8 @@ The node depends on small injected interfaces, so it is testable without real
 networking or wall-clock time:
 
 - `Store` — persistence (satisfied by `*storage.Store`).
-- `Transport` — peer RPC sending (used from Phase 5).
-- `ApplyFunc` — applying a committed entry (wired in Phase 6).
+- `Transport` — peer RPC sending.
+- `ApplyFunc` — applying a committed entry.
 - `Clock` — `Now` / `After`, so tests drive election timing deterministically.
 
 ### Persistent transitions
@@ -234,9 +233,9 @@ networking or wall-clock time:
   one term across a crash. The in-memory term is advanced only after the disk
   write succeeds, so memory never runs ahead of disk.
 - `becomeCandidate` — increments the term and votes for self, persisting both
-  before any RequestVote is sent (the sending side is Phase 5).
+  before any RequestVote is sent.
 - `becomeLeader` — initializes each follower's `nextIndex = lastLogIndex + 1`
-  and `matchIndex = 0` (the no-op append and heartbeats are Phase 5).
+  and `matchIndex = 0`.
 
 ### Recovery and identity
 
@@ -245,12 +244,12 @@ checkpoints from the store, and pins the cluster ID: it adopts the configured ID
 on first start, and **refuses to start** if the stored ID differs from the
 configured one (guarding against cross-cluster mix-ups).
 
-### RPC handling (Phase 4 baseline)
+### RPC handling
 
 `RequestVote` and `AppendEntries` handlers enforce the term rules and
 higher-term step-down and return the current term.
 
-### Leader election (Phase 5)
+### Leader election
 
 - **Randomized election timeouts** (default 800–1400 ms) are drawn from a
   per-node RNG seeded independently, so nodes rarely time out together and split
@@ -273,7 +272,7 @@ higher-term step-down and return the current term.
 - A node **steps down immediately** on any request or response carrying a higher
   term, persisting the new term and clearing its vote before responding.
 
-### Internal RPC transport and endpoint (Phase 5)
+### Internal RPC transport and endpoint
 
 `internal/api` provides both sides of the wire:
 
@@ -286,10 +285,9 @@ higher-term step-down and return the current term.
   decoding (unknown fields rejected). These routes must never be exposed through
   the public gateway.
 
-The node is wired into the running server when the public decision API needs it
-(Phase 7).
+The node is wired into the running server when the public decision API needs it.
 
-### Log replication, quorum commit, and ordered apply (Phase 6)
+### Log replication, quorum commit, and ordered apply
 
 **Proposals.** `Propose` is accepted only on the leader. The command is appended
 to the leader's durable log first, a waiter is registered for that index, and
@@ -328,7 +326,7 @@ waiter.
 entries (`lastApplied+1..commitIndex`) before serving requests, so a node that
 crashed between commit and apply recovers its full state.
 
-## Public decision API (`internal/api`, Phase 7)
+## Public decision API (`internal/api`)
 
 `POST /v1/decisions` is the public entry point, callable on any node.
 
@@ -361,7 +359,7 @@ then serves `/health/live`, `/v1/decisions`, the admin routes, and the private
 `/internal/raft/*` routes from one HTTP server. The node is stopped before
 storage closes on shutdown.
 
-## Admin authentication and mutation APIs (Phase 8)
+## Admin authentication and mutation APIs
 
 - **Sign-in** compares `QL_ADMIN_TOKEN` in constant time and issues an 8-hour
   signed session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in production)
@@ -379,7 +377,7 @@ storage closes on shutdown.
 
 See `docs/security.md` for the full security model.
 
-## Admin dashboard (`internal/dashboard`, Phase 9)
+## Admin dashboard (`internal/dashboard`)
 
 A server-rendered admin UI built with `html/template`, with templates and static
 assets **embedded in the binary** (`go:embed`) so there are no missing files in a
@@ -406,7 +404,7 @@ container and no external CDN assets.
 
 The `/api/admin/*` JSON APIs remain available for programmatic/testing use.
 
-## Health, readiness, and metrics (Phase 10)
+## Health, readiness, and metrics
 
 ### Health
 
@@ -442,7 +440,7 @@ Role and term changes, leader changes, and granted votes are logged as JSON
 events; heartbeats are not logged (they are counted in metrics instead).
 Authorization headers, cookies, subjects, and one-time keys are never logged.
 
-## Local deployment (Phase 11)
+## Local deployment
 
 A multi-stage `Dockerfile` compiles a static binary (`CGO_ENABLED=0`, trimmed)
 and ships it on `alpine:3.23` as a **nonroot** user (uid 10001) with `/data`
@@ -458,7 +456,7 @@ substitution — never baked into the image. Only Caddy publishes a public port
 `deploy/Caddyfile` load-balances public and admin routes across the nodes and
 **returns 404 for `/internal/*` and `/metrics`**, which must never be public.
 Its site address defaults to `:8080` (HTTP) and is switched to a domain (with
-automatic HTTPS) in production (Phase 14).
+automatic HTTPS) in production.
 
 ## Testing (`internal/testcluster`)
 

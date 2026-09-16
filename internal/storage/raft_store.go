@@ -101,7 +101,7 @@ func (s *Store) SetLastApplied(index uint64) error { return s.setMetaU64(metaLas
 
 // AppendEntries writes entries in ascending index order. Existing indexes are
 // overwritten, which is how a leader's authoritative entries replace a
-// follower's conflicting ones (paired with TruncateSuffix in later phases).
+// follower's conflicting ones (paired with TruncateSuffix).
 func (s *Store) AppendEntries(entries []LogEntry) error {
 	if len(entries) == 0 {
 		return nil

@@ -107,7 +107,7 @@ func (n *Node) failWaiters(err error) {
 }
 
 // LeaderID returns the node's currently known leader ID (may be empty). Useful
-// for forwarding decisions (Phase 7).
+// for forwarding decisions to the leader.
 func (n *Node) LeaderID() (string, error) {
 	s, err := n.Status()
 	if err != nil {

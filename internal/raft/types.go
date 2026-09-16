@@ -97,8 +97,7 @@ type AppendEntriesRequest struct {
 }
 
 // AppendEntriesResponse answers an AppendEntriesRequest. On a log mismatch it
-// carries conflict hints so the leader can back up efficiently (used in
-// Phase 6).
+// carries conflict hints so the leader can back up efficiently.
 type AppendEntriesResponse struct {
 	ProtocolVersion int    `json:"protocol_version"`
 	SourceNodeID    string `json:"source_node_id"`

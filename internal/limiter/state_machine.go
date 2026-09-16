@@ -11,7 +11,7 @@ import (
 )
 
 // Reject codes are stable, non-secret identifiers for business rejections. HTTP
-// status mapping happens at the API layer (later phases).
+// status mapping happens at the API layer.
 const (
 	RejectValidation          = "validation_failed"
 	RejectPolicyNotFound      = "policy_not_found"

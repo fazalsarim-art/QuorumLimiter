@@ -1,6 +1,6 @@
 # Caddy gateway for QuorumLimiter. The site address defaults to :8080 (plain
 # HTTP for local development); in production set QL_SITE_ADDRESS to your domain
-# and Caddy will provision HTTPS automatically (see docs/deployment.md, Phase 14).
+# and Caddy will provision HTTPS automatically (see docs/deployment.md).
 {$QL_SITE_ADDRESS::8080} {
 	encode zstd gzip
 

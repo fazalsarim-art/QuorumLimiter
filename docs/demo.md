@@ -131,8 +131,8 @@ make release-check   # fmt-check, vet, test, race, lint, vuln, secret-scan
 
 - **golangci-lint** (`.golangci.yml`) — the standard linters plus
   revive / misspell / unconvert.
-- **govulncheck** — the Go vulnerability database. Phase 13 bumped the toolchain
-  to Go 1.26.6 to clear six standard-library advisories.
+- **govulncheck** — the Go vulnerability database; the toolchain is pinned to Go
+  1.26.6 to clear six standard-library advisories.
 - **secret-scan** (`scripts/secret-scan.sh`) — greps tracked files for private
   keys, cloud/vendor tokens and raw API keys; real secrets live only in the
   gitignored `deploy/.env`.

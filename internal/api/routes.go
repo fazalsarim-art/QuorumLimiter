@@ -2,9 +2,8 @@ package api
 
 import "net/http"
 
-// This file centralizes HTTP route registration for the api package. Route
-// groups are added as their phases land: internal Raft RPCs (Phase 5), the
-// public decision API (Phase 7), and admin endpoints (Phase 8).
+// This file centralizes HTTP route registration for the api package: the
+// internal Raft RPCs, the public decision API, and the admin endpoints.
 
 // RegisterInternalRaft registers the private Raft RPC endpoints on mux. These
 // must never be exposed through the public gateway.

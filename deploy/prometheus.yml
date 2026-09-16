@@ -1,5 +1,5 @@
 # Prometheus scrape configuration for a local three-node QuorumLimiter cluster.
-# In Compose (Phase 11) the targets are the node service names; the /metrics
+# In Compose the targets are the node service names; the /metrics
 # endpoint is private and must not be exposed through the public gateway.
 global:
   scrape_interval: 10s
